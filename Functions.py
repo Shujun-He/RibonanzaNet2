@@ -176,4 +176,4 @@ class CSVLogger:
         return self
 
 if __name__=='__main__':
-    print(load_config_from_yaml("configs/sequence_only.yaml"))
+    print(load_config_from_yaml("configs/pairwise.yaml"))

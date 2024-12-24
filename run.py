@@ -128,7 +128,7 @@ seq_length=data_dict['labels'].shape[1]
 train_dataset=RNADataset(train_indices,data_dict,k=config.k,
                         flip=config.use_flip_aug)
 train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=True,
-                        collate_fn=Custom_Collate_Obj(),num_workers=min(config.batch_size,16),
+                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=min(config.batch_size,16),
                         pin_memory=True,
                         persistent_workers=True)
 
@@ -138,7 +138,7 @@ sample=train_dataset[0]
 
 val_dataset=RNADataset(val_indices,data_dict,train=False,k=config.k)
 val_loader=DataLoader(val_dataset,batch_size=config.test_batch_size,shuffle=False,
-                        collate_fn=Custom_Collate_Obj(),num_workers=min(config.batch_size,16))
+                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=min(config.batch_size,16))
 
 
 print(accelerator.distributed_type)

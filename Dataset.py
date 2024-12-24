@@ -134,15 +134,19 @@ class TestRNAdataset(RNADataset):
 
 
 class Custom_Collate_Obj:
-
+    def __init__(self,max_len):
+        self.max_len=max_len
 
     def __call__(self,data):
         # 
         length=[]
         for i in range(len(data)):
             length.append(len(data[i]['sequence']))
-        #max_len=max(length)
-        max_len=206
+        if self.max_len>0:
+            max_len=self.max_len
+        else:
+            max_len=max(length)
+        #max_len=206
 
         sequence=[]
         labels=[]
