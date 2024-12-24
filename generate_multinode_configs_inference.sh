@@ -1,0 +1,1 @@
+python generate_multinode_configs_inference.py --n_nodes 32 --n_gpus_per_node 8 --master_node gpu010 --script_name inference.py
