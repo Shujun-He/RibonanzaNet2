@@ -25,7 +25,7 @@ standard_preds=[]
 for i in tqdm(range(len(test))):
     length=test['id_max'][i]-test['id_min'][i]+1
     id=test['sequence_id'][i]
-    pre_truncated=preds[id][:,[1,0]]
+    pre_truncated=preds[id]#[:,[1,0]]
     standard_preds.append(pre_truncated[:length])
 
 standard_preds=np.concatenate(standard_preds)

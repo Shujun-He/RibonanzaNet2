@@ -58,7 +58,6 @@ class RNADataset(Dataset):
 
         #labels are in the order 2A3, DMS
         labels=self.data_dict['labels'][idx][:seq_length].copy()
-        errors=self.data_dict['errors'][idx][:seq_length].copy()
 
 
         loss_mask = (labels==labels) #mask nan labels
@@ -69,17 +68,13 @@ class RNADataset(Dataset):
         label_mask=labels!=labels
 
         labels[label_mask]=0
-        errors[errors!=errors]=0
 
         labels=labels.clip(0,1)
 
         sequence=torch.tensor(sequence).long()
         labels=torch.tensor(labels).float()
         loss_mask=torch.tensor(loss_mask).bool()
-        #mask=torch.tensor(self.src_masks[idx])
         mask=torch.ones(seq_length)
-        #mask=torch.tensor(mask)
-        errors=torch.tensor(errors).float()
 
         SN=torch.tensor(self.data_dict['SN'][idx]).float()
 
@@ -98,7 +93,6 @@ class RNADataset(Dataset):
               "labels":labels,
               "mask":mask,
               "loss_mask":loss_mask,
-              "errors":errors,
               "SN":SN,}
 
 
@@ -134,7 +128,7 @@ class TestRNAdataset(RNADataset):
 
 
 class Custom_Collate_Obj:
-    def __init__(self,max_len):
+    def __init__(self,max_len=None):
         self.max_len=max_len
 
     def __call__(self,data):
@@ -171,7 +165,6 @@ class Custom_Collate_Obj:
             loss_masks.append(F.pad(data[i]['loss_mask'],(0,0,0,to_pad),value=0))
             #print(data[i]['labels'].shape)
             labels.append(F.pad(data[i]['labels'],(0,0,0,to_pad),value=0))
-            errors.append(F.pad(data[i]['errors'],(0,0,0,to_pad),value=0))
             SN.append(data[i]['SN'])
             if use_bpp:
                 bpps.append(F.pad(data[i]['bpp'],(0,to_pad,0,to_pad),value=0))
@@ -181,7 +174,6 @@ class Custom_Collate_Obj:
         labels=torch.stack(labels)#.permute(0,2,1)
         masks=torch.stack(masks)
         loss_masks=torch.stack(loss_masks)#.permute(0,2,1)
-        errors=torch.stack(errors)#.permute(0,2,1)
         SN=torch.stack(SN)
         if use_bpp:
             bpps=torch.stack(bpps)
@@ -195,7 +187,6 @@ class Custom_Collate_Obj:
               "labels":labels,
               "masks":masks,
               "loss_masks":loss_masks,
-              "errors":errors,
               "SN":SN,
               "length":length}
 

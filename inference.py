@@ -66,7 +66,7 @@ for i in range(1):
 
 
     # model.load_state_dict(renamed_weights)
-    model.load_state_dict(torch.load("models/epoch_14/pytorch_model_fsdp.bin"))
+    model.load_state_dict(torch.load("models/epoch_19/pytorch_model_fsdp.bin"))
 
 
     model=torch.compile(model)

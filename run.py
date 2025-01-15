@@ -34,6 +34,7 @@ args = parser.parse_args()
 np.random.seed(0)
 
 config = load_config_from_yaml(args.config_path)
+config.print()
 
 accelerator = Accelerator(mixed_precision='bf16')
 
@@ -49,32 +50,28 @@ logger=CSVLogger(['epoch','train_loss','val_loss'],f'logs/fold{config.fold}.csv'
 
 
 with open('data/data_dict.p','rb') as f:
-    # data_dict = {
-    #     'sequences': sequences,
-    #     'sequence_ids': sequence_ids,
-    #     'SN': SN,
-    # }
     data_dict=pickle.load(f)
+    print(data_dict.keys())
 
-
-with open('data/dataset_name.p','rb') as f:
-    dataset_name=pickle.load(f)
 
 data_shape=np.load('data/data_shape.npy')
 
 data_dict['labels']=np.memmap('data/labels.mmap', dtype='float32', mode='r', shape=tuple(data_shape))
-data_dict['errors']=np.memmap('data/errors.mmap', dtype='float32', mode='r', shape=tuple(data_shape))
 
-# data_dict['labels']=np.array(data_dict['labels'])
-# data_dict['errors']=np.array(data_dict['errors'])
 
+high_quality_indices = np.where(data_dict['SN'].min(1)>=1)[0]
+dirty_data_indices = np.where((data_dict['SN'].min(1)<1) & (data_dict['SN'].max(1)>=1))[0]
+print(f"Number of high quality sequences: {len(high_quality_indices)}")
+print(f"Number of dirty data sequences: {len(dirty_data_indices)}")
+
+#exit()
 
 #StratifiedKFold on dataset
-kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+kfold=KFold(n_splits=config.nfolds,shuffle=True, random_state=0)
 fold_indices={}
-for i, (train_index, test_index) in enumerate(kfold.split(np.arange(len(dataset_name)),dataset_name)):
-    fold_indices[i]=(train_index,test_index)
-
+for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices)):
+    fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
+#exit()
 
 train_indices=fold_indices[config.fold][0]
 val_indices=fold_indices[config.fold][1]
@@ -88,31 +85,16 @@ if config.use_data_percentage<1:
 
 if config.use_dirty_data:
     print(f"number of sequences in train {len(train_indices)}")
-    train_indices=np.concatenate([train_indices,np.arange(len(dataset_name),len(data_dict['labels']))])
+    train_indices=np.concatenate([train_indices,dirty_data_indices])
     print(f"number of sequences in train {len(train_indices)} after using dirty data")
+
+#exit()
 
 
 
 if hasattr(config,"dataset2drop"):
     train_indices=dataset_dropout(dataset_name, train_indices, config.dataset2drop)
 
-
-# if accelerator.is_local_main_process:
-#     pl.Config.set_fmt_str_lengths(100)
-#     print(data[np.concatenate([train_indices*2,train_indices*2+1])]['dataset_name'].value_counts(sort=True))
-#     print(data[np.concatenate([val_indices*2,val_indices*2+1])]['dataset_name'].value_counts(sort=True))
-    #print(data[val_indices*2]['dataset_name'].value_counts(sort=True))
-#exit()
-#train_indices=np.concatenate([train_indices,np.arange(len(train_indices),len(train_indices)+len(dirty_data)//2)])
-
-
-val_datasets_names=[dataset_name[i] for i in val_indices]
-
-with open("oofs/val_dataset_names.p",'wb+') as f:
-    pickle.dump(val_datasets_names,f)
-
-# del data
-# del dirty_data
 
 print(f"train shape: {train_indices.shape}")
 print(f"val shape: {val_indices.shape}")
@@ -205,7 +187,6 @@ for epoch in range(config.epochs):
         #batch_attention_mask=batch['attention_mask'].unsqueeze(1)[:,:,:src.shape[-1],:src.shape[-1]]
 
         loss_masks=batch['loss_masks']#.cuda()
-        errors=batch['errors']#.cuda()#.un
 #SSH FS test 
         SN=SN.reshape(SN.shape[0],1,SN.shape[1])>=1
         loss_masks=loss_masks*SN
@@ -225,7 +206,7 @@ for epoch in range(config.epochs):
             loss=criterion(output,labels)#*loss_weight BxLxC
             loss=loss[loss_masks]
             loss=loss.mean()
-
+        #exit()
         accelerator.backward(loss/config.gradient_accumulation_steps)
         
         #loss.backward()
