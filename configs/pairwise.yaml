@@ -2,11 +2,11 @@
 learning_rate: 0.004 # The learning rate for the optimizer
 batch_size: 2        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
-epochs: 5            # Total training epochs
+epochs: 20            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
 weight_decay: 0.0001
-k: 5
+k: 5 #not used
 ninp: 384
 nlayers: 48
 nclass: 2
@@ -20,7 +20,7 @@ use_triangular_attention: false
 pairwise_dimension: 128
 dim_msa: 32
 clip_grad_norm: 1
-max_len: 206
+max_len: 177
 
 #Data scaling
 use_data_percentage: 1
