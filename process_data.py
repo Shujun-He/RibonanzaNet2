@@ -30,6 +30,8 @@ os.system('mkdir data')
 
 
 data=h5py.File('../../Ribonanza2A_Genscript.v0.1.0.hdf5', 'r')
+sublib_data=pl.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
+#exit()
 SN=data['signal_to_noise'][:]
 sequences=data['sequences'][:]
 labels=data['r_norm'][:]
@@ -54,6 +56,7 @@ with open('data/data_dict.p','wb+') as f:
     save_data_dict = {
         'sequences': data_dict['sequences'],
         'SN': data_dict['SN'],
+        'dataset_name': sublib_data,
     }
     pickle.dump(save_data_dict,f)
 

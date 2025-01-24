@@ -67,9 +67,10 @@ print(f"Number of dirty data sequences: {len(dirty_data_indices)}")
 #exit()
 
 #StratifiedKFold on dataset
-kfold=KFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
 fold_indices={}
-for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices)):
+high_quality_dataname=[data_dict['dataset_name'][i] for i in high_quality_indices]
+for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
     fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
 #exit()
 
@@ -90,10 +91,16 @@ if config.use_dirty_data:
 
 #exit()
 
+plot_and_save_bar_chart([data_dict['dataset_name'][i] for i in train_indices],
+                f"dataset_cnt.png")
 
 
 if hasattr(config,"dataset2drop"):
-    train_indices=dataset_dropout(dataset_name, train_indices, config.dataset2drop)
+    print(f"dropping {config.dataset2drop} from training data")
+    
+    # print(set(data_dict['dataset_name']))
+    # exit()
+    train_indices=dataset_dropout(data_dict['dataset_name'], train_indices, config.dataset2drop)
 
 
 print(f"train shape: {train_indices.shape}")

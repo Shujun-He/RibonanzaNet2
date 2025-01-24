@@ -6,6 +6,41 @@ import yaml
 
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
+import matplotlib.pyplot as plt
+from collections import Counter
+def plot_and_save_bar_chart(dataset_name, save_path):
+    """
+    Generates a bar chart for the counts of unique elements in dataset_name and saves the plot.
+
+    Parameters:
+        dataset_name (list): A list of elements to count and plot.
+        save_path (str): Path to save the bar chart image.
+
+    Returns:
+        None
+    """
+    # Count the unique elements
+    element_counts = Counter(dataset_name)
+    
+    # Extract elements and their counts
+    elements = list(element_counts.keys())
+    counts = list(element_counts.values())
+    
+    # Plot the bar chart
+    plt.figure(figsize=(8, 6))
+    plt.bar(elements, counts)
+    plt.xlabel('Elements')
+    plt.ylabel('Count')
+    plt.title('Count of Unique Elements in Dataset')
+    
+    plt.xticks(rotation=45, ha='right')
+
+    # Save the plot to a file
+    plt.tight_layout()
+    plt.savefig(save_path, format='png', dpi=300)
+    plt.close()  # Close the plot to free memory
+    print(f"Bar chart saved to {save_path}")
+
 
 class LinearWarmupScheduler(_LRScheduler):
     """Linear warmup learning rate scheduler.
@@ -60,21 +95,22 @@ def drop_pk5090_duplicates(df):
 
 def dataset_dropout(dataset_name,train_indices, dataset2drop):
 
-    #dataset_name=pl.Series(dataset_name)
-    dataset_filter=pl.Series(dataset_name).str.starts_with(dataset2drop)
-    dataset_filter=dataset_filter.to_numpy()
+    # #dataset_name=pl.Series(dataset_name)
+    # dataset_filter=pl.Series(dataset_name).str.starts_with(dataset2drop)
+    # dataset_filter=dataset_filter.to_numpy()
 
-    dropout_indcies=set(np.where(dataset_filter==False)[0])
-    # print(dropout_indcies)
-    # exit()
+    # dropout_indcies=set(np.where(dataset_filter==False)[0])
+    # # print(dropout_indcies)
+    # # exit()
 
 
     print(f"number of training examples before droppint out {dataset2drop}")
     print(train_indices.shape)
     before=len(train_indices)
 
-    train_indices=set(train_indices).intersection(set(np.where(dataset_filter==False)[0]))
-    train_indices=np.array(list(train_indices))
+
+    train_indices= [i for i in train_indices if dataset_name[i]!=dataset2drop]
+    train_indices=np.array(train_indices)
 
     print(f"number of training examples after droppint out {dataset2drop}")
     print(len(train_indices))
