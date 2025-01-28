@@ -189,7 +189,7 @@ def load_config_from_yaml(file_path):
 
 pretrain_logs=pd.read_csv('logs/fold0.csv')
 best_epoch=pretrain_logs['val_loss'].argmin()
-best_epoch=4
+#best_epoch=9
 best_weights_path=f"models/epoch_{best_epoch}/pytorch_model_fsdp.bin"
 
 print(f"best_weights_path: {best_weights_path}")
@@ -249,6 +249,8 @@ os.environ['ARNIEFILE'] = '../arnie_file.txt'
 print(os.environ['ARNIEFILE'])
 
 from arnie.pk_predictors import _hungarian
+from arnie.utils import convert_dotbracket_to_bp_list
+
 def mask_diagonal(matrix, mask_value=0):
     matrix=matrix.copy()
     n = len(matrix)
@@ -557,7 +559,7 @@ test_data.to_parquet(f"test_results/{prefix}_finetuned_test.parquet",index=False
 
 # In[22]:
 
-
+# test casp15
 casp_data=pd.read_csv("../casp15.csv")
 #casp_data.loc[2,'sequence']=casp_data.loc[2,'sequence'].replace('&','A')
 casp_data['pairs']=[[] for _ in range(len(casp_data))]
@@ -669,3 +671,89 @@ casp_data['RibonanzaNet_Hungarian_CP_F1']=crossed_pair_F1s
 
 casp_data.to_csv(f"test_results/{prefix}_casp15_ribonanzanet.csv",index=False)
 
+
+
+
+# test casp16
+casp16_data=pd.read_parquet("../../CASP16_SS_all_compiled.parquet")[['ID','structure']]
+casp16_targets=pd.read_csv("../../3bead_model/casp16_sequences.csv").rename(columns={'sequence_id':'ID'})
+casp16_targets=casp16_targets.merge(casp16_data,how='left',on='ID')
+#only take those that have ID starts with R1 and the drop duplicates by sequence
+casp16_targets=casp16_targets.loc[casp16_targets['ID'].str.startswith('R1')].drop_duplicates('sequence').reset_index(drop=True)
+#drop ID==R1260
+casp16_targets=casp16_targets.loc[casp16_targets['ID']!='R1260'].reset_index(drop=True)
+
+
+casp16_targets['pairs']=[[] for _ in range(len(casp16_targets))]
+casp16_targets['RNA_sequence']=casp16_targets['sequence']
+casp_dataset=RNA2D_Dataset(casp16_targets)
+
+
+ribonanza_casp_ss=[]
+model.eval()
+for i in tqdm(range(len(casp_dataset))):
+    example=casp_dataset[i]
+    sequence=example['sequence'].cuda().unsqueeze(0)
+    labels=example['ct'].cuda()
+
+    with torch.no_grad():
+        ribonanza_casp_ss.append(model(sequence).sigmoid().cpu().numpy())
+
+casp_preds_hungarian=[]
+casp_hungarian_structures=[]
+casp_hungarian_bps=[]
+for i in range(len(ribonanza_casp_ss)):
+    s,bp=_hungarian(mask_diagonal(ribonanza_casp_ss[i][0]),theta=best_theta, min_len_helix=1)
+    casp_hungarian_bps.append(bp)
+    ct_matrix=np.zeros((len(s),len(s)))
+    for b in bp:
+        ct_matrix[b[0],b[1]]=1
+    ct_matrix=ct_matrix+ct_matrix.T
+    casp_preds_hungarian.append(ct_matrix)
+    casp_hungarian_structures.append(s)
+
+def find_dash_positions(s):
+    return {pos for pos, char in enumerate(s) if char == '-'}
+
+F1s=[]
+crossed_pair_F1s=[]
+for true_dbn, predicted_bp in zip(casp16_targets['structure'],casp_hungarian_bps):
+    #predicted_bp=dotbrackte2bp(predicted_bp) 
+    true_dbn=true_dbn[0]
+    missing_positions=find_dash_positions(true_dbn)
+    true_dbn=true_dbn.replace('-','.')
+    true_bp=convert_dotbracket_to_bp_list(true_dbn,allow_pseudoknots=True)
+    filtered_predicted_bp=[]
+    for i in range(len(predicted_bp)):
+        if predicted_bp[i][0] in missing_positions or predicted_bp[i][1] in missing_positions:
+            pass
+        else:
+            filtered_predicted_bp.append(predicted_bp[i].copy())
+    predicted_bp=filtered_predicted_bp
+    #true_bp=literal_eval(true_bp)
+    crossed_pairs,crossed_pairs_set=detect_crossed_pairs(true_bp)
+    predicted_crossed_pairs,predicted_crossed_pairs_set=detect_crossed_pairs(predicted_bp)
+    _,_,f1=calculate_f1_score_with_pseudoknots(true_bp, predicted_bp)
+    F1s.append(f1)
+    if len(crossed_pairs)>0:
+        _,_,crossed_pair_f1=calculate_f1_score_with_pseudoknots(crossed_pairs, predicted_crossed_pairs)
+        crossed_pair_F1s.append(crossed_pair_f1)
+    elif len(crossed_pairs)==0 and len(predicted_crossed_pairs)>0:
+        crossed_pair_F1s.append(0)
+    else:
+        crossed_pair_F1s.append(np.nan)
+
+print('global F1 mean',np.mean(F1s))
+print('global F1 median',np.median(F1s))
+print('crossed pair F1 mean',np.nanmean(crossed_pair_F1s))
+print('crossed pair F1 median',np.nanmedian(crossed_pair_F1s))
+
+casp16_targets['RibonanzaNet_Hungarian']=casp_hungarian_structures
+casp16_targets['RibonanzaNet_Hungarian_F1']=F1s
+casp16_targets['RibonanzaNet_Hungarian_CP_F1']=crossed_pair_F1s
+
+
+# In[ ]:
+
+
+casp16_targets.to_csv(f"test_results/{prefix}_casp16_ribonanzanet.csv",index=False)

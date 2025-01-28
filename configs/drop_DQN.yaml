@@ -1,5 +1,5 @@
 # Model hyperparameters
-learning_rate: 0.004 # The learning rate for the optimizer
+learning_rate: 0.002 # The learning rate for the optimizer
 batch_size: 4        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
 epochs: 5            # Total training epochs
@@ -32,3 +32,4 @@ fold: 0
 nfolds: 6
 input_dir: "../../input/"
 gpu_id: "0"
+dataset2drop: " DQN"
