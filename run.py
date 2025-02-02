@@ -113,13 +113,15 @@ seq_length=data_dict['labels'].shape[1]
 
 # print(seq_length)
 # exit()
+num_workers = min(config.batch_size, multiprocessing.cpu_count() // 8)
 
 train_dataset=RNADataset(train_indices,data_dict,k=config.k,
                         flip=config.use_flip_aug)
 train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=True,
-                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=min(config.batch_size,16),
+                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=num_workers,
                         pin_memory=True,
-                        persistent_workers=True)
+                        persistent_workers=True,
+                        prefetch_factor=4)
 
 sample=train_dataset[0]
 
@@ -143,6 +145,10 @@ print(f"Total number of parameters in the model: {total_params}")
 optimizer = Ranger(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
 #optimizer = torch.optim.Adam(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
 
+
+
+
+
 criterion=torch.nn.L1Loss(reduction='none')
 val_criterion=torch.nn.L1Loss(reduction='none')
 
@@ -156,16 +162,10 @@ warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
                                     final_lr=config.learning_rate)
 #exit()
 optimizer, train_loader, val_loader, lr_schedule, warmup_schduler= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule, warmup_schduler)
-# Print all the weights and biases
-# for name, param in model.named_parameters():
-#     # if 'weight' in name:
-#     #     print(f"Layer: {name}, Weights: {param.data}")
-#     # elif 'bias' in name:
-#     #     print(f"Layer: {name}, Biases: {param.data}")
-    
-#     if "gate" in name:
-#         print(f"Layer: {name}, Weights: {param.data}")
-#         print(f"Layer: {name}, Biases: {param.data}")
+
+@torch.compile(fullgraph=False)
+def optimizer_step():
+    optimizer.step()
     
 if args.compile == 'true':
     model = torch.compile(model,dynamic=False)
@@ -220,7 +220,8 @@ for epoch in range(config.epochs):
         if (idx + 1) % config.gradient_accumulation_steps == 0:
             #if accelerator.sync_gradients:
             accelerator.clip_grad_norm_(model.parameters(), config.clip_grad_norm)
-            optimizer.step()
+            #optimizer.step()
+            optimizer_step()
             optimizer.zero_grad()
             if epoch > cos_epoch:
                 lr_schedule.step()
