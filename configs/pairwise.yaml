@@ -1,16 +1,17 @@
 # Model hyperparameters
-learning_rate: 0.004 # The learning rate for the optimizer
-batch_size: 4        # Number of samples per batch
-test_batch_size: 8        # Number of samples per batch
-epochs: 5            # Total training epochs
+learning_rate: 0.001 # The learning rate for the optimizer
+batch_size: 6        # Number of samples per batch
+test_batch_size: 2        # Number of samples per batch
+epochs: 10            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
 weight_decay: 0.0001
 k: 5 #not used
 ninp: 384
 nlayers: 48
-nclass: 2
-ntoken: 6 #AUGC + padding/N token
+decoder_nlayers: 3
+nclass: 8
+ntoken: 1000 #AUGC + padding/N token
 nhead: 12
 #use_bpp: False
 use_flip_aug: false
@@ -19,8 +20,9 @@ gradient_accumulation_steps: 1
 use_triangular_attention: false
 pairwise_dimension: 128
 dim_msa: 32
-clip_grad_norm: 1
+clip_grad_norm: 1.0
 max_len: 177
+max_seq: 128
 
 #Data scaling
 use_data_percentage: 1

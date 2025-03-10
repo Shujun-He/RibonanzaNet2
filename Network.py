@@ -7,8 +7,50 @@ import matplotlib.pyplot as plt
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 import torch.utils.checkpoint as checkpoint
-
+from Decoder import *
 from dropout import *
+class CausalConv1d(nn.Module):
+    """
+    Causal 1D Convolution layer - only operates on past elements in the sequence
+    Input: (batch_size, sequence_length, channels)
+    Output: (batch_size, sequence_length, out_channels)
+    """
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, dilation=1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.dilation = dilation
+        self.padding_size = (kernel_size - 1) * dilation
+        
+        # Create regular 1D convolution
+        self.conv = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            dilation=dilation,
+            padding=0,  # We'll handle padding manually
+        )
+
+    def forward(self, x):
+        # Input is BxLxC, conv expects BxCxL
+        x = x.transpose(1, 2)
+        
+        # Add padding to the left/past
+        padding = torch.zeros(
+            x.shape[0],  # batch
+            x.shape[1],  # channels
+            self.padding_size,  # padding size
+            device=x.device,
+            dtype=x.dtype
+        )
+        x_padded = torch.cat([padding, x], dim=-1)
+        
+        # Apply convolution
+        out = self.conv(x_padded)
+        
+        # Return to BxLxC format
+        return out.transpose(1, 2)
 
 def recursive_linear_init(m,scale_factor):
     for child_name, child in m.named_modules():
@@ -310,7 +352,7 @@ class ConvTransformerEncoderLayer(nn.Module):
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, dropout=0.1, max_len=200):
+    def __init__(self, d_model, dropout=0.1, max_len=2000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
@@ -468,6 +510,7 @@ class RibonanzaNet(nn.Module):
         super(RibonanzaNet, self).__init__()
         self.config=config
         nhid=config.ninp*4
+        self.ninp=config.ninp
         self._tied_weights_keys = [] #avoids AttributeError: 'RibonanzaNet' object has no attribute '_tied_weights_keys'
         self.transformer_encoder = []
         print(f"constructing {config.nlayers} ConvTransformerEncoderLayers")
@@ -491,15 +534,43 @@ class RibonanzaNet(nn.Module):
             #scale_factor=i+1
             #scale_factor=0
             recursive_linear_init(layer,scale_factor)
-        
-        self.encoder = nn.Embedding(config.ntoken, config.ninp, padding_idx=4)
-        self.decoder = nn.Linear(config.ninp,config.nclass)
 
-        recursive_linear_init(self.decoder,scale_factor)
+
+        
 
         self.outer_product_mean=Outer_Product_Mean(in_dim=config.ninp,dim_msa=config.dim_msa,pairwise_dim=config.pairwise_dimension)
         self.pos_encoder=relpos(config.pairwise_dimension)
         self.use_gradient_checkpoint=False
+
+        #self.load_state_dict(torch.load('../../8m_exps/test10/models/epoch_4/pytorch_model_fsdp.bin'),strict=False)
+
+        
+        self.encoder = nn.Embedding(config.ntoken, config.ninp, padding_idx=4)
+        self.decoder = nn.Linear(config.ninp,config.nclass)
+        recursive_linear_init(self.decoder,scale_factor)
+        
+        self.decoder_layers=[]
+        for i in range(config.decoder_nlayers):
+            scale_factor=1/(config.nlayers+i+1)**0.5
+            #scale_factor=1e-9
+            layer=OptimizedDecoderLayer(config.ninp, config.nhead, config.pairwise_dimension, config.dropout)
+            # layer=nn.TransformerDecoderLayer(d_model=config.ninp, nhead=config.nhead, 
+            #                                             dim_feedforward=config.ninp*4, dropout=config.dropout, batch_first=True)
+            recursive_linear_init(layer,scale_factor)
+            self.decoder_layers.append(layer)
+        self.decoder_layers=nn.ModuleList(self.decoder_layers)
+
+        #self.decoder_pos_encoder=nn.Embedding(2000, config.ninp)
+        self.tgt_norm=nn.LayerNorm(config.ninp)
+
+        self.decoder_conv=nn.Sequential(CausalConv1d(config.ninp,config.ninp,5),
+                                        nn.LayerNorm(config.ninp))
+
+        self.outer_product_head=nn.Linear(config.pairwise_dimension,8)
+
+        self.binary_head=nn.Linear(config.ninp,1)
+
+        self.r_norm_head=nn.Linear(config.ninp,2)
 
     def custom(self, module):
         def custom_forward(*inputs):
@@ -507,7 +578,7 @@ class RibonanzaNet(nn.Module):
             return inputs
         return custom_forward
 
-    def forward(self, src,src_mask=None,return_aw=False):
+    def forward(self, src, tgt, src_mask=None,return_aw=False):
         B,L=src.shape
         src = src
         src = self.encoder(src).reshape(B,L,-1)
@@ -532,13 +603,60 @@ class RibonanzaNet(nn.Module):
             # use_reentrant=False)
             src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
 
-        output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0
+        #output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0
+        #src=src#+pairwise_features.mean()*0
+        r_norm=self.r_norm_head(src)
+        # print(pairwise_features.shape)
+        # print(tgt.shape)
+        # exit()
 
+        tgt_mask = torch.triu(torch.full((tgt.size(2), tgt.size(2)), float('-inf'), device=tgt.device), diagonal=1)
+
+        tgt=self.encoder(tgt)#.squeeze(0)
+
+        #repeat src 
+        Nr=tgt.size(1)
+        Lr=tgt.size(2)
+        src=src.unsqueeze(1).repeat(1,Nr,1,1) 
+        src=src.reshape(B*Nr,L,-1)
+        tgt=tgt.reshape(B*Nr,Lr,-1)
+
+        #encode pos in tgt
+        # tgt_pos=self.decoder_pos_encoder(torch.arange(Lr).long().to(tgt.device)).unsqueeze(0)
+        # src_pos=self.decoder_pos_encoder(torch.arange(L).long().to(tgt.device)).unsqueeze(0)
+        #tgt=tgt+tgt_pos
+        res=tgt
+        tgt=self.decoder_conv(tgt)
+        tgt=self.tgt_norm(res+tgt)
+        # print(src.shape)
+        # print(tgt.shape)
+        # print(tgt_mask.shape)
+        # exit()
+        #src=src#*0
+        #tgt_mask=None
+        #src=src+src_pos
+        for layer in self.decoder_layers:
+            input=[tgt, src, pairwise_features, tgt_mask, None, False]
+            #tgt, _ = layer(input)
+            #tgt , _ =checkpoint.checkpoint(self.custom(layer), input, use_reentrant=False)
+            tgt , _ =layer(input)
+        
+        # print(tgt.shape)
+        # exit()
+        tgt=tgt.reshape(B,Nr,Lr,-1)
+
+        output = self.decoder(tgt)
+
+        # print(output.shape)
+        # exit()
+        
+        binary_head=self.binary_head(tgt).squeeze(-1)
+        outer_product=self.outer_product_head(pairwise_features)
 
         if return_aw:
             return output, attention_weights
         else:
-            return output
+            return output, binary_head, outer_product, r_norm
 
     def get_embeddings(self, src,src_mask=None,return_aw=False):
         B,L=src.shape

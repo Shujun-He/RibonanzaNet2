@@ -13,7 +13,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType, FullStateDictConfig, ShardedStateDictConfig
 from accelerate.utils.fsdp_utils import save_fsdp_model
 import multiprocessing
-import h5py
+from scipy.stats import pearsonr
 
 #multiprocessing.set_start_method("spawn")
 
@@ -56,37 +56,35 @@ logger=CSVLogger(['epoch','train_loss','val_loss'],f'logs/fold{config.fold}.csv'
 # List of prefixes
 prefixes = [
     "RTB000_Marathon_Bicine_3pct_DMS",
+    "RTB001_Marathon_Bicine_nomod",
     "RTB002_SSII_Bicine_2A3",
+    "RTB003_SSII_Bicine_nomod"
 ]
 
-filter_prefixes = [
-    "RTB000_Marathon_Bicine_3pct_DMS",
-    "RTB002_SSII_Bicine_2A3",
-]
-input_dir = '/lustre/fs0/scratch/shujun/BothLanes_RawReads'
-lengths=[599528185,496581631]
+lengths=[606861064,276294348,546241823,258796672]
 
-hdf5_data=h5py.File(f'{input_dir}/OneMil.v0.1.0.hdf5','r')
-#exit()
 
+input_dir = '/lustre/fs0/scratch/shujun/BothLanes_RPT'
 min_read = 128
 #create filter vector where num_reads>min_read for all prefixes
-# filter_vector=[]
-# for prefix, length in zip(filter_prefixes, lengths):
-#     csv=pl.read_csv(f'{input_dir}/{prefix}.index.csv')
-#     filter_vector.append(csv["num_reads"].to_numpy()>min_read)
+filter_vector=[]
+for prefix, length in zip(prefixes, lengths):
+    csv=pl.read_csv(f'{input_dir}/{prefix}.index.csv')
+    filter_vector.append(csv["num_reads"].to_numpy()>min_read)
 
-# #filter_vector=np.stack(filter_vector,-1).sum(-1)==len(prefixes)
-# filter_vector=np.stack(filter_vector,-1).sum(-1)>0
-filter_vector=hdf5_data['signal_to_noise'][:].max(-1)>1.0
+filter_vector=np.stack(filter_vector,-1).sum(-1)==len(prefixes)
 #exit()
+train_labels=pl.read_csv("../../input/train_data.csv")
+train_labels=train_labels[:len(train_labels)//2].unique(subset=['sequence'])
+
+first_seq="GGGAACGACUCGAGUAGAGUCGAAAAUUUCCUUCCAAAUCCUGAGGGAGAGAUAGAGGCGGAGGGUCUGGGGGAGGAAUUAAAACACAAGGUCUCCUCCCCUCUCGCCUGUCCGAACUUGGGGGCACCCCGGCUCGUACUUCGGUACGAGCCGGGGAAAAGAAACAACAACAACAAC"
 
 
-#exit()
+
 data={}
 for prefix, length in zip(prefixes, lengths):
 
-    raw_data = np.memmap(f'{input_dir}/{prefix}.align_reads.txt.memmap', dtype=np.uint8, mode='r', shape=(length, 177))
+    raw_data = np.memmap(f'{input_dir}/{prefix}.reads.txt.memmap', dtype=np.uint8, mode='r', shape=(length, 192))
     csv=pl.read_csv(f'{input_dir}/{prefix}.index.csv')#[:1000]
     csv=csv.filter(filter_vector)
     rawread_indices=[[i,j] for i,j in zip(csv['read_start'].to_numpy(),csv['read_end'].to_numpy())]
@@ -94,11 +92,10 @@ for prefix, length in zip(prefixes, lengths):
 
     data[prefix]={'raw_data':raw_data,'rawread_indices':rawread_indices,'sequences':sequences}
 
-#save rnorm to memmap
-rnorm_data={}
-rnorm_data['r_norm']=hdf5_data['r_norm']#[filter_vector]
-rnorm_data['r_norm_index']=np.arange(len(filter_vector))[filter_vector]
-rnorm_data['signal_to_noise']=hdf5_data['signal_to_noise']
+labels_2a3=csv.join(train_labels,on='sequence',how='left')
+
+r_norm=labels_2a3[[f'reactivity_{i+1:04d}' for i in range(177)]].to_numpy()
+
 #exit()
 
 #exit()
@@ -152,8 +149,8 @@ seq_length=256
 # exit()
 num_workers = min(config.batch_size, multiprocessing.cpu_count() // 8)
 
-train_dataset=RawReadRNADataset(train_indices,data,rnorm_data,max_len=config.max_len,max_seq=config.max_seq)
-train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=True,
+train_dataset=RawReadRNADataset(train_indices,data,max_len=config.max_len,max_seq=config.max_seq)
+train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=False,
                         num_workers=num_workers,
                         pin_memory=True,
                         persistent_workers=True,
@@ -163,7 +160,7 @@ sample=train_dataset[0]
 
 #exit()
 
-val_dataset=RawReadRNADataset(val_indices,data,rnorm_data,max_len=config.max_len)
+val_dataset=RawReadRNADataset(val_indices,data,max_len=config.max_len)
 val_loader=DataLoader(val_dataset,batch_size=config.test_batch_size,shuffle=False,
                         num_workers=min(config.batch_size,16))
 
@@ -183,12 +180,11 @@ print(f"Total number of parameters in the model: {total_params}")
 optimizer = Ranger(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
 #optimizer = torch.optim.Adam(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
 
+model.load_state_dict(torch.load("models/epoch_9/pytorch_model_fsdp.bin"))
 
 
 
-
-criterion=torch.nn.CrossEntropyLoss(reduction='none') #
-binary_CE=torch.nn.BCEWithLogitsLoss(reduction='none')
+criterion=torch.nn.CrossEntropyLoss(reduction='none')
 val_criterion=torch.nn.CrossEntropyLoss(reduction='none')
 
 #.to(accelerator.device)#.cuda().float()
@@ -217,10 +213,6 @@ for epoch in range(config.epochs):
     
     tbar = tqdm(train_loader)
     total_loss=0
-    total_outer_product_loss=0
-    total_binary_loss=0
-    total_raw_read_loss=0
-    total_r_norm_loss=0
     model.train()
     #for batch in tqdm(train_loader):
 
@@ -230,84 +222,73 @@ for epoch in range(config.epochs):
         masks=batch['mask'].bool()#.cuda()
         rawreads=batch['rawreads']#.cuda()
         rawreads_mask=batch['rawreads_mask']#.cuda()
-        outer_product=batch['outer_products']#.cuda()
-        r_norm=batch['r_norm']#.cuda()
-        snr=batch['snr']#.cuda()
-
-        #exit()
         labels=rawreads[:,:,1:]
 
-        src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
-        change=(src_expand != rawreads[:,:,1:])
-        change_onehot=torch.nn.functional.one_hot(change.long(),num_classes=2).float()
-
-        l=change.shape[1]//2
+        #print(labels.max())
 
         bs=len(src)
         #exit()
-        loss=0
-        snr_mask=snr>1.0
-        with accelerator.autocast():
-            output, binary_output, outer_product_pred, r_norm_pred=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
-            
-            loss_masks =  (rawreads[:,:,1:] != 255) #mask out padding
-            loss_masks = loss_masks.reshape(loss_masks.shape[0],2,-1,loss_masks.shape[-1])*snr_mask[:,:,None,None]
-            loss_masks = loss_masks.reshape(loss_masks.shape[0],-1,loss_masks.shape[-1])
-            
-            loss_weight = torch.ones_like(labels).float().to(output.device)
-            loss_weight[(src_expand != rawreads[:,:,1:])]=100.0 #set weight to 10 for mismatched bases
-            raw_read_loss=criterion(output[loss_masks],labels[loss_masks])*loss_weight[loss_masks]
-            raw_read_loss=raw_read_loss.mean()
+        # with accelerator.autocast():
+        #     output=model(src,rawreads[:,:,:-1],masks)
+        #     output=output.permute(0,3,1,2)
+        #     loss=criterion(output,labels)#*loss_weight BxLxC
+        #     loss_masks=rawreads_mask[:,:,1:].bool()
+        #     loss=loss[loss_masks]
+        #     loss=loss.mean()
+            # optimizer.zero_grad()
+            # continue
+        #exit()
+        tgt=torch.cat([torch.ones(1,1).cuda()*8,src],-1)[:,:-1].long()
+        tgt2=torch.cat([torch.ones(1,1).cuda()*9,src],-1)[:,:-1].long()
+        output=model(src,tgt.unsqueeze(1),masks).softmax(-1).squeeze(1)-model(src,tgt2.unsqueeze(1),masks).softmax(-1).squeeze(1)
+        #output[0,0]
 
-            total_raw_read_loss+=raw_read_loss.item()
+        self_prob=[]
+        for i in range(tgt.size(1)):
+            nt=src[0,i].item()
+            self_prob.append(1-output[0,i,nt].item())
+        self_prob=np.array(self_prob)
 
-            #binary loss
-            binary_loss=binary_CE(binary_output[loss_masks],change[loss_masks].float())*loss_weight[loss_masks]
-            loss+=binary_loss.mean()
-            total_binary_loss+=binary_loss.mean().item()
+        r=r_norm[train_indices[idx]].astype('float32').clip(0,1)
+        
+        
 
-            loss+=raw_read_loss
-
-            outer_product_mask=torch.ones_like(outer_product).bool().permute(0,3,1,2)
-            outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],2,-1,outer_product_mask.shape[-1],outer_product_mask.shape[-1])*snr_mask[:,:,None,None,None]
-            outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],-1,outer_product_mask.shape[-2],outer_product_mask.shape[-1])
-            outer_product_mask=outer_product_mask.permute(0,2,3,1)
-            #~torch.isnan(outer_product)
-            outer_product_loss=torch.nn.functional.mse_loss(outer_product_pred[outer_product_mask],outer_product[outer_product_mask])
-            # if outer_product_loss!=outer_product_loss:
-            #     exit()
-            loss+=outer_product_loss*0.2
-
-            #mae loss on r norm
-            r_norm_mask=(~torch.isnan(r_norm))*snr_mask[:,None,:]
-            r_norm_loss=torch.nn.functional.l1_loss(r_norm_pred[r_norm_mask],r_norm[r_norm_mask])
-            loss+=r_norm_loss
-            total_r_norm_loss+=r_norm_loss.item()
-
-            total_outer_product_loss+=outer_product_loss.item()
+        #plt.plot((self_prob-self_prob[25:140].mean())/self_prob[25:140].std())
+        try:
+            corr=pearsonr(self_prob[26:125],r[26:125])[0]
+        except:
+            corr=0
+        z=(self_prob-self_prob[26:125].mean())/self_prob[26:125].std()
+        #plt.plot(z[26:125],label="z of self_prob")
+        plt.plot(self_prob[26:125],label="self_prob")
+        plt.plot(r[26:125],label="r")
+        plt.legend()
+        plt.title(f"Correlation: {corr}")
+        plt.savefig(f"plots/self_prob_{epoch}_{idx}.png")
+        plt.close()
 
         #exit()
-        accelerator.backward(loss/config.gradient_accumulation_steps)
+        # accelerator.backward(loss/config.gradient_accumulation_steps)
         
-        #loss.backward()
-        if (idx + 1) % config.gradient_accumulation_steps == 0:
-            #if accelerator.sync_gradients:
-            accelerator.clip_grad_norm_(model.parameters(), config.clip_grad_norm)
-            #optimizer.step()
-            optimizer_step()
-            optimizer.zero_grad()
-            if epoch > cos_epoch:
-                lr_schedule.step()
-            elif epoch == 0:
-                warmup_schduler.step()
+        # #loss.backward()
+        # if (idx + 1) % config.gradient_accumulation_steps == 0:
+        #     #if accelerator.sync_gradients:
+        #     accelerator.clip_grad_norm_(model.parameters(), config.clip_grad_norm)
+        #     #optimizer.step()
+        #     optimizer_step()
+        #     optimizer.zero_grad()
+        #     if epoch > cos_epoch:
+        #         lr_schedule.step()
+        #     elif epoch == 0:
+        #         warmup_schduler.step()
 
         
-        total_loss+=loss.item()
-        #exit()
-        tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1)} Outer Product Loss: \
-{total_outer_product_loss/(idx+1)} Raw Read Loss: {total_raw_read_loss/(idx+1)}, Binary Loss: {total_binary_loss/(idx+1)} R Norm Loss: {total_r_norm_loss/(idx+1)}")
+        # total_loss+=loss.item()
+        # #exit()
+        # tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1)}")
         
-
+        if idx>30:
+            exit()
         #break
     train_loss=total_loss/(idx+1)
 
@@ -332,10 +313,12 @@ for epoch in range(config.epochs):
         #with accelerator.autocast():
         with torch.no_grad():
             with accelerator.autocast():
-                output,_,_,_=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
-                src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
-                loss_masks = (src_expand != rawreads[:,:,1:]) * (rawreads[:,:,1:] != 255)
-                loss=criterion(output[loss_masks],labels[loss_masks]).mean()#*loss_weight BxLxC
+                output=model(src,rawreads[:,:,:-1],masks)
+                output=output.permute(0,3,1,2)
+                loss=criterion(output,labels)#*loss_weight BxLxC
+                loss_masks=rawreads_mask[:,:,1:].bool()
+                loss=loss[loss_masks]
+                loss=loss.mean()
 
 
         loss = accelerator.gather(loss).mean()
@@ -365,7 +348,38 @@ for epoch in range(config.epochs):
 
         if val_loss<best_val_loss:
             best_val_loss=val_loss
+            #if torch.distributed.get_rank() == 0:
+            #torch.save(accelerator.unwrap_model(model).state_dict(),f"models/model{config.fold}.pt")
+            #torch.save(model.state_dict(),f"models/model{config.fold}.pt")
+            #state_dict=accelerator.get_state_dict(model)
+            #torch.save(state_dict,f"models/model{config.fold}.pt")
+            # print(accelerator.unwrap_model(model).state_dict())
+            # unwrapped_model=accelerator.unwrap_model(model)
+            # full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            # with FSDP.state_dict_type(unwrapped_model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+            #     state = accelerator.get_state_dict(unwrapped_model)
+            # exit()
+            # Using context manager for saving
+            # with FSDP.state_dict_type(
+            #     model, 
+            #     StateDictType.SHARDED_STATE_DICT,
+            #     ShardedStateDictConfig(offload_to_cpu=True)  # Optionally offload to CPU
+            # ):
+            #     state_dict = model.state_dict()
+            #     # Each rank saves its own shard
+            #     torch.save(state_dict, f"model-shard-{torch.distributed.get_rank()}.pt")
 
+            #accelerator.save_model(model, f"models/model{config.fold}.pt")
+            #accelerator.save_state("models")
+            # data_dict = {
+            #                 "preds": preds.cpu().numpy(),
+            #                 "gts": gts.cpu().numpy(),
+            #                 "val_loss_masks": val_loss_masks.cpu().numpy()
+            #             }
+
+            # # Save to pickle file
+            # with open(f"oofs/{config.fold}.pkl", "wb+") as file:
+            #     pickle.dump(data_dict, file)
     save_start_time=time.time()
     #if accelerator.is_main_process:
     accelerator.save_state(f"models/epoch_{epoch}",safe_serialization=False)

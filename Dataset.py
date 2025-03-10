@@ -98,6 +98,131 @@ class RNADataset(Dataset):
 
         return data
 
+def compute_outer_product(rawread,sequence):
+    sequence=sequence.unsqueeze(0)
+    difference=sequence!=rawread
+    difference=F.one_hot(difference.long(),2).float()#[:,:,-1]
+    nreads=len(difference)
+    outer_product=torch.einsum('bic,bjd->ijcd',difference,difference)/nreads
+    outer_product=outer_product.reshape(*outer_product.shape[:2],-1)
+    return outer_product
+
+
+class RawReadRNADataset(Dataset):
+    def __init__(self,indices, data, rnorm_data, max_len=192, max_seq=256):
+        """
+        raw read dataset
+        tokens ACGUNP then start tokens for each experiment (DMS_nomod, DMS...etc)
+        """
+        self.indices=indices
+        self.data=data
+        self.rnorm_data=rnorm_data
+        self.tokens={nt:i for i,nt in enumerate('ACGU')}
+        self.tokens['P']=4
+        #self.train=train
+        self.max_len=max_len
+        self.max_seq=max_seq
+
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        #data[prefix]={'raw_data':raw_data,'csv':csv,'rawread_indices':rawread_indices,'sequences':sequences}
+
+        idx=self.indices[idx]
+
+        all_rawreads=[]
+        all_rawreads_mask=[]
+        all_outer_products=[]
+        for start_token,prefix in enumerate(self.data):
+            #unpack data
+            rawread=self.data[prefix]['raw_data']
+            #csv=self.data[prefix]['csv']
+            rawread_indices=self.data[prefix]['rawread_indices']
+            sequences=self.data[prefix]['sequences']
+
+
+            start,end=rawread_indices[idx]
+            start=start-1
+            end=end-1
+
+            sequence=[self.tokens[nt] for nt in sequences[idx].replace('T','U')]
+            sequence=np.array(sequence)
+
+            seq_length=len(sequence)
+
+            #handle special case where start>end (no raw reads)
+            if end<start:
+                end=start
+
+            #if fewer than max_seq, pad with 4
+            if seq_length<self.max_len:
+                sequence=np.pad(sequence,(0,self.max_len-seq_length),mode='constant',constant_values=4)
+
+            if end-start>self.max_seq:#randomly pick max_seq uniformly
+                indices=np.random.choice(np.arange(start,end),self.max_seq,replace=False)
+                rawreads=rawread[indices]
+            elif end-start<=self.max_seq:
+                #padd with 4
+                rawreads=rawread[start:end]
+                rawreads=np.pad(rawreads,((0,self.max_seq-(end-start)),(0,0)),mode='constant',constant_values=255)
+
+            #rawreads=rawreads[:,:177]
+
+            #append start token 6 vector to the front of rawreads
+            if (end-start)>1:
+                outer_product=compute_outer_product(torch.tensor(rawread[start:end]),torch.tensor(sequence))
+            else: #nans
+                outer_product=torch.full((rawreads.shape[1],rawreads.shape[1],4),np.nan)
+
+
+            rawreads=np.concatenate([np.ones((rawreads.shape[0],1),dtype='int8')*(start_token+6),rawreads],axis=-1)
+            
+
+            N,L=rawreads.shape
+
+            #pad to self.max_len with 4
+            mask= sequence!=4
+            rawreads_mask = rawreads!=255
+
+
+            sequence=torch.tensor(sequence).long()
+            rawreads=torch.tensor(rawreads).long()
+            mask=torch.tensor(mask).float()
+            rawreads_mask=torch.tensor(rawreads_mask).float()
+
+            
+            # print(outer_product.shape)
+            # exit()
+
+            all_rawreads.append(rawreads)
+            all_rawreads_mask.append(rawreads_mask)
+            all_outer_products.append(outer_product)
+
+        rawreads=torch.cat(all_rawreads)
+        rawreads_mask=torch.cat(all_rawreads_mask)
+        all_outer_products=torch.cat(all_outer_products,-1)
+        
+        #get r norm data
+        r_norm_index=self.rnorm_data['r_norm_index'][idx]
+        r_norm=self.rnorm_data['r_norm'][r_norm_index]
+        r_norm=torch.tensor(r_norm).float().clip(0,1)
+        snr=self.rnorm_data['signal_to_noise'][r_norm_index]
+
+
+        data={'sequence':sequence,
+              "rawreads":rawreads,
+              "outer_products":all_outer_products,
+              "mask":mask,
+              "rawreads_mask":rawreads_mask,
+              "r_norm":r_norm,
+              "snr":snr}
+
+
+        return data
+
+
 class TestRNAdataset(RNADataset):
     def __getitem__(self, idx):
         
@@ -231,3 +356,5 @@ class Custom_Collate_Obj_test(Custom_Collate_Obj):
             data["bpps"]=bpps
 
         return data
+
+
