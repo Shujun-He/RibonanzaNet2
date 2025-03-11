@@ -8,6 +8,74 @@ import torch
 from torch.optim.lr_scheduler import _LRScheduler
 import matplotlib.pyplot as plt
 from collections import Counter
+import torch.nn.functional as F
+
+def rawread_training_loss(batch, model, accelerator):
+    src=batch['sequence']#.cuda()
+    masks=batch['mask'].bool()#.cuda()
+    rawreads=batch['rawreads']#.cuda()
+    rawreads_mask=batch['rawreads_mask']#.cuda()
+    outer_product=batch['outer_products']#.cuda()
+    r_norm=batch['r_norm']#.cuda()
+    snr=batch['snr']#.cuda()  
+    labels=rawreads[:,:,1:]
+
+    src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
+    change=(src_expand != rawreads[:,:,1:])
+
+    l=change.shape[1]//2
+
+    bs=len(src)
+    #exit()
+    loss=0
+    snr_mask=snr>1.0
+    with accelerator.autocast():
+        output, binary_output, outer_product_pred, r_norm_pred=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
+        
+        #get loss masks
+        loss_masks =  (rawreads[:,:,1:] != 255) #mask out padding
+        loss_masks = loss_masks.reshape(loss_masks.shape[0],2,-1,loss_masks.shape[-1])*snr_mask[:,:,None,None]
+        loss_masks = loss_masks.reshape(loss_masks.shape[0],-1,loss_masks.shape[-1])
+        
+        #upweight mutated positions
+        loss_weight = torch.ones_like(labels).float().to(output.device)
+        loss_weight[(src_expand != rawreads[:,:,1:])]=100.0 #set weight to 10 for mismatched bases
+
+        #compute raw read loss
+        raw_read_loss=F.cross_entropy(output[loss_masks],labels[loss_masks],reduction='none')*loss_weight[loss_masks]
+        raw_read_loss=raw_read_loss.mean()
+
+        #total_raw_read_loss+=raw_read_loss.item()
+
+        #binary loss
+        binary_loss=F.binary_cross_entropy_with_logits(binary_output[loss_masks],change[loss_masks].float(),reduction='none')*loss_weight[loss_masks]
+        binary_loss=binary_loss.mean()
+        #loss+=binary_loss.mean()
+        #total_binary_loss+=binary_loss.mean().item()
+
+        #loss+=raw_read_loss
+
+        outer_product_mask=torch.ones_like(outer_product).bool().permute(0,3,1,2)
+        outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],2,-1,outer_product_mask.shape[-1],outer_product_mask.shape[-1])*snr_mask[:,:,None,None,None]
+        outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],-1,outer_product_mask.shape[-2],outer_product_mask.shape[-1])
+        outer_product_mask=outer_product_mask.permute(0,2,3,1)
+        #~torch.isnan(outer_product)
+        outer_product_loss=F.mse_loss(outer_product_pred[outer_product_mask],outer_product[outer_product_mask])
+        # if outer_product_loss!=outer_product_loss:
+        #     exit()
+        #loss+=outer_product_loss*0.2
+
+        #mae loss on r norm
+        r_norm_mask=(~torch.isnan(r_norm))*snr_mask[:,None,:]
+        r_norm_loss=F.l1_loss(r_norm_pred[r_norm_mask],r_norm[r_norm_mask])
+        #loss+=r_norm_loss
+        #total_r_norm_loss+=r_norm_loss.item()
+
+        #total_outer_product_loss+=outer_product_loss.item()
+
+    #return all losses for tracking
+    return raw_read_loss, binary_loss, outer_product_loss, r_norm_loss
+
 def plot_and_save_bar_chart(dataset_name, save_path):
     """
     Generates a bar chart for the counts of unique elements in dataset_name and saves the plot.

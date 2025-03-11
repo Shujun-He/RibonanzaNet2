@@ -46,7 +46,10 @@ os.environ["TORCH_DISTRIBUTED_DEBUG"]='DETAIL'
 os.system('mkdir logs')
 os.system('mkdir models')
 os.system('mkdir oofs')
-logger=CSVLogger(['epoch','train_loss','val_loss'],f'logs/fold{config.fold}.csv')
+logger=CSVLogger(['epoch','train_loss','train_rawread_loss','train_binary_rawread_loss','train_outer_product_loss','train_r_norm_loss',
+                    'val_loss','val_rawread_loss','val_binary_rawread_loss','val_outer_product_loss','val_r_norm_loss'],
+                    f'logs/fold{config.fold}.csv')
+                  
 
 
 # with open('data/data_dict.p','rb') as f:
@@ -107,7 +110,9 @@ rnorm_data['signal_to_noise']=hdf5_data['signal_to_noise']
 kfold=KFold(n_splits=config.nfolds,shuffle=True, random_state=0)
 fold_indices={}
 # dataset_name=csv['dataset_name'].to_numpy()
-for i, (train_index, test_index) in enumerate(kfold.split(np.arange(len(csv)))):
+indices=np.arange(len(csv))
+#indices=np.arange(100)
+for i, (train_index, test_index) in enumerate(kfold.split(indices)):
     fold_indices[i]=train_index, test_index
 #exit()
 
@@ -226,67 +231,21 @@ for epoch in range(config.epochs):
 
     for idx, batch in enumerate(tbar):
         
-        src=batch['sequence']#.cuda()
-        masks=batch['mask'].bool()#.cuda()
-        rawreads=batch['rawreads']#.cuda()
-        rawreads_mask=batch['rawreads_mask']#.cuda()
-        outer_product=batch['outer_products']#.cuda()
-        r_norm=batch['r_norm']#.cuda()
-        snr=batch['snr']#.cuda()
+        raw_read_loss, binary_loss, outer_product_loss, r_norm_loss = rawread_training_loss(batch, model, accelerator)
 
-        #exit()
-        labels=rawreads[:,:,1:]
+        #weighted loss from config
+        loss = config.raw_read_loss_weight * raw_read_loss +\
+               config.binary_loss_weight * binary_loss + \
+               config.outer_product_loss_weight * outer_product_loss + \
+               config.r_norm_loss_weight * r_norm_loss
+        
+        #track all losses
+        total_outer_product_loss+=outer_product_loss.item()
+        total_raw_read_loss+=raw_read_loss.item()
+        total_binary_loss+=binary_loss.item()
+        total_r_norm_loss+=r_norm_loss.item()
 
-        src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
-        change=(src_expand != rawreads[:,:,1:])
-        change_onehot=torch.nn.functional.one_hot(change.long(),num_classes=2).float()
 
-        l=change.shape[1]//2
-
-        bs=len(src)
-        #exit()
-        loss=0
-        snr_mask=snr>1.0
-        with accelerator.autocast():
-            output, binary_output, outer_product_pred, r_norm_pred=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
-            
-            loss_masks =  (rawreads[:,:,1:] != 255) #mask out padding
-            loss_masks = loss_masks.reshape(loss_masks.shape[0],2,-1,loss_masks.shape[-1])*snr_mask[:,:,None,None]
-            loss_masks = loss_masks.reshape(loss_masks.shape[0],-1,loss_masks.shape[-1])
-            
-            loss_weight = torch.ones_like(labels).float().to(output.device)
-            loss_weight[(src_expand != rawreads[:,:,1:])]=100.0 #set weight to 10 for mismatched bases
-            raw_read_loss=criterion(output[loss_masks],labels[loss_masks])*loss_weight[loss_masks]
-            raw_read_loss=raw_read_loss.mean()
-
-            total_raw_read_loss+=raw_read_loss.item()
-
-            #binary loss
-            binary_loss=binary_CE(binary_output[loss_masks],change[loss_masks].float())*loss_weight[loss_masks]
-            loss+=binary_loss.mean()
-            total_binary_loss+=binary_loss.mean().item()
-
-            loss+=raw_read_loss
-
-            outer_product_mask=torch.ones_like(outer_product).bool().permute(0,3,1,2)
-            outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],2,-1,outer_product_mask.shape[-1],outer_product_mask.shape[-1])*snr_mask[:,:,None,None,None]
-            outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],-1,outer_product_mask.shape[-2],outer_product_mask.shape[-1])
-            outer_product_mask=outer_product_mask.permute(0,2,3,1)
-            #~torch.isnan(outer_product)
-            outer_product_loss=torch.nn.functional.mse_loss(outer_product_pred[outer_product_mask],outer_product[outer_product_mask])
-            # if outer_product_loss!=outer_product_loss:
-            #     exit()
-            loss+=outer_product_loss*0.2
-
-            #mae loss on r norm
-            r_norm_mask=(~torch.isnan(r_norm))*snr_mask[:,None,:]
-            r_norm_loss=torch.nn.functional.l1_loss(r_norm_pred[r_norm_mask],r_norm[r_norm_mask])
-            loss+=r_norm_loss
-            total_r_norm_loss+=r_norm_loss.item()
-
-            total_outer_product_loss+=outer_product_loss.item()
-
-        #exit()
         accelerator.backward(loss/config.gradient_accumulation_steps)
         
         #loss.backward()
@@ -304,18 +263,28 @@ for epoch in range(config.epochs):
         
         total_loss+=loss.item()
         #exit()
-        tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1)} Outer Product Loss: \
-{total_outer_product_loss/(idx+1)} Raw Read Loss: {total_raw_read_loss/(idx+1)}, Binary Loss: {total_binary_loss/(idx+1)} R Norm Loss: {total_r_norm_loss/(idx+1)}")
+        tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1):.2f} Outer Product Loss: \
+{total_outer_product_loss/(idx+1):.2f} Raw Read Loss: {total_raw_read_loss/(idx+1):.2f}, \
+Binary Loss: {total_binary_loss/(idx+1):.2f} R Norm Loss: {total_r_norm_loss/(idx+1):.2f}")
         
 
         #break
     train_loss=total_loss/(idx+1)
-
+    total_outer_product_loss=total_outer_product_loss/(idx+1)
+    total_raw_read_loss=total_raw_read_loss/(idx+1)
+    total_binary_loss=total_binary_loss/(idx+1)
+    total_r_norm_loss=total_r_norm_loss/(idx+1)
 
     # validation loop
     model.eval()
     tbar = tqdm(val_loader)
     val_loss=0
+    total_val_outer_product_loss=0
+    total_val_binary_loss=0
+    total_val_raw_read_loss=0
+    total_val_r_norm_loss=0
+
+
     preds=[]
     gts=[]
     print("doing val")
@@ -332,28 +301,42 @@ for epoch in range(config.epochs):
         #with accelerator.autocast():
         with torch.no_grad():
             with accelerator.autocast():
-                output,_,_,_=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
-                src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
-                loss_masks = (src_expand != rawreads[:,:,1:]) * (rawreads[:,:,1:] != 255)
-                loss=criterion(output[loss_masks],labels[loss_masks]).mean()#*loss_weight BxLxC
+                raw_read_loss, binary_loss, outer_product_loss, r_norm_loss = rawread_training_loss(batch, model, accelerator)
 
+                #weighted loss from config
+                loss = config.raw_read_loss_weight * raw_read_loss +\
+                    config.binary_loss_weight * binary_loss + \
+                    config.outer_product_loss_weight * outer_product_loss + \
+                    config.r_norm_loss_weight * r_norm_loss
 
+        
+        #gather losses from all processes
         loss = accelerator.gather(loss).mean()
-        # all_labels = accelerator.gather(labels)
-        # all_masks = accelerator.gather(loss_masks)
+        raw_read_loss = accelerator.gather(raw_read_loss).mean()
+        binary_loss = accelerator.gather(binary_loss).mean()
+        outer_product_loss = accelerator.gather(outer_product_loss).mean()
+        r_norm_loss = accelerator.gather(r_norm_loss).mean()
 
+        #track all losses
+        total_val_outer_product_loss+=outer_product_loss.item()
+        total_val_raw_read_loss+=raw_read_loss.item()
+        total_val_binary_loss+=binary_loss.item()
+        total_val_r_norm_loss+=r_norm_loss.item()
         val_loss+=loss.item()
 
 
-        tbar.set_description(f"Epoch {epoch + 1} Val Loss: {val_loss/(idx+1)}")
+        tbar.set_description(f"Epoch {epoch + 1} Val Loss: {val_loss/(idx+1):.2f} Outer Product Loss: \
+{total_val_outer_product_loss/(idx+1):.2f} Raw Read Loss: {total_val_raw_read_loss/(idx+1):.2f}, \
+Binary Loss: {total_val_binary_loss/(idx+1):.2f} R Norm Loss: {total_val_r_norm_loss/(idx+1):.2f}")
 
-        
+    
 
     val_loss=val_loss/len(tbar)
-        #break
-    # preds=torch.cat(preds)
-    # gts=torch.cat(gts)
-    # val_loss_masks=torch.cat(val_loss_masks)
+    total_val_outer_product_loss=total_val_outer_product_loss/len(tbar)
+    total_val_raw_read_loss=total_val_raw_read_loss/len(tbar)
+    total_val_binary_loss=total_val_binary_loss/len(tbar)
+    total_val_r_norm_loss=total_val_r_norm_loss/len(tbar)
+
 
 
     # print(accelerator.is_main_process)
@@ -361,7 +344,8 @@ for epoch in range(config.epochs):
     if accelerator.is_main_process:
         #val_loss=val_criterion(preds[val_loss_masks],gts[val_loss_masks]).mean().item()
 
-        logger.log([epoch,train_loss,val_loss])
+        logger.log([epoch,train_loss,total_raw_read_loss,total_binary_loss,total_outer_product_loss,total_r_norm_loss,
+                    val_loss,total_val_raw_read_loss,total_val_binary_loss,total_val_outer_product_loss,total_val_r_norm_loss])
 
         if val_loss<best_val_loss:
             best_val_loss=val_loss

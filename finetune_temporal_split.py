@@ -189,7 +189,7 @@ def load_config_from_yaml(file_path):
 
 pretrain_logs=pd.read_csv('logs/fold0.csv')
 best_epoch=pretrain_logs['val_loss'].argmin()
-#best_epoch=11
+best_epoch=9
 best_weights_path=f"models/epoch_{best_epoch}/pytorch_model_fsdp.bin"
 
 print(f"best_weights_path: {best_weights_path}")

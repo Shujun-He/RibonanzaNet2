@@ -1,6 +1,6 @@
 # Model hyperparameters
-learning_rate: 0.001 # The learning rate for the optimizer
-batch_size: 6        # Number of samples per batch
+learning_rate: 0.002 # The learning rate for the optimizer
+batch_size: 2        # Number of samples per batch
 test_batch_size: 2        # Number of samples per batch
 epochs: 10            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
@@ -27,6 +27,13 @@ max_seq: 128
 #Data scaling
 use_data_percentage: 1
 use_dirty_data: true # turn off for data scaling and data dropout experiments
+
+#Loss weights
+#loss = raw_read_loss + binary_loss + outer_product_loss + r_norm_loss
+raw_read_loss_weight: 1
+binary_loss_weight: 1
+outer_product_loss_weight: 0.2
+r_norm_loss_weight: 1
 
 
 # Other configurations
