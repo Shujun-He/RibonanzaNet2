@@ -2,10 +2,10 @@ import torch.nn as nn
 import torch
 
 class OptimizedDecoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, pair_dim, dropout):
+    def __init__(self, d_model, memory_dim, nhead, pair_dim, dropout):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout = dropout, batch_first=True)
-        self.cross_concat = CrossConcat(d_model, dropout)
+        self.cross_concat = CrossConcat(d_model, memory_dim, dropout)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_model * 4),
             nn.ReLU(),
@@ -95,11 +95,11 @@ class OptimizedDecoderLayer(nn.Module):
 
 
 class CrossConcat(nn.Module):
-    def __init__(self, d_model, dropout):
+    def __init__(self, d_model, memory_dim, dropout):
         super().__init__()
-        self.linear=nn.Linear(d_model*2,d_model)
+        self.linear=nn.Linear(d_model+memory_dim,d_model)
         self.dropout=nn.Dropout(dropout)
-        self.gate=nn.Linear(d_model*2,d_model)
+        self.gate=nn.Linear(d_model+memory_dim,d_model)
 
 
     def forward(self, x1, x2):

@@ -546,14 +546,15 @@ class RibonanzaNet(nn.Module):
 
         
         self.encoder = nn.Embedding(config.ntoken, config.ninp, padding_idx=4)
-        self.decoder = nn.Linear(config.ninp,config.nclass)
+        self.decoder = nn.Linear(config.decoder_ninp,config.nclass)
         recursive_linear_init(self.decoder,scale_factor)
         
+        self.decoder_embedding=nn.Embedding(config.ntoken, config.decoder_ninp, padding_idx=4)
         self.decoder_layers=[]
         for i in range(config.decoder_nlayers):
             scale_factor=1/(config.nlayers+i+1)**0.5
             #scale_factor=1e-9
-            layer=OptimizedDecoderLayer(config.ninp, config.nhead, config.pairwise_dimension, config.dropout)
+            layer=OptimizedDecoderLayer(config.decoder_ninp, config.ninp, config.decoder_nhead, config.pairwise_dimension, config.dropout)
             # layer=nn.TransformerDecoderLayer(d_model=config.ninp, nhead=config.nhead, 
             #                                             dim_feedforward=config.ninp*4, dropout=config.dropout, batch_first=True)
             recursive_linear_init(layer,scale_factor)
@@ -561,14 +562,13 @@ class RibonanzaNet(nn.Module):
         self.decoder_layers=nn.ModuleList(self.decoder_layers)
 
         #self.decoder_pos_encoder=nn.Embedding(2000, config.ninp)
-        self.tgt_norm=nn.LayerNorm(config.ninp)
+        self.tgt_norm=nn.LayerNorm(config.decoder_ninp)
 
-        self.decoder_conv=nn.Sequential(CausalConv1d(config.ninp,config.ninp,5),
-                                        nn.LayerNorm(config.ninp))
+        #self.decoder_conv=nn.Sequential(CausalConv1d(config.decoder_ninp,config.decoder_ninp,5))
 
         self.outer_product_head=nn.Linear(config.pairwise_dimension,8)
 
-        self.binary_head=nn.Linear(config.ninp,1)
+        self.binary_head=nn.Linear(config.decoder_ninp,1)
 
         self.r_norm_head=nn.Linear(config.ninp,2)
 
@@ -603,16 +603,13 @@ class RibonanzaNet(nn.Module):
             # use_reentrant=False)
             src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
 
-        #output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0
-        #src=src#+pairwise_features.mean()*0
+
         r_norm=self.r_norm_head(src)
-        # print(pairwise_features.shape)
-        # print(tgt.shape)
-        # exit()
+
 
         tgt_mask = torch.triu(torch.full((tgt.size(2), tgt.size(2)), float('-inf'), device=tgt.device), diagonal=1)
 
-        tgt=self.encoder(tgt)#.squeeze(0)
+        tgt=self.decoder_embedding(tgt)#.squeeze(0)
 
         #repeat src 
         Nr=tgt.size(1)
@@ -625,9 +622,9 @@ class RibonanzaNet(nn.Module):
         # tgt_pos=self.decoder_pos_encoder(torch.arange(Lr).long().to(tgt.device)).unsqueeze(0)
         # src_pos=self.decoder_pos_encoder(torch.arange(L).long().to(tgt.device)).unsqueeze(0)
         #tgt=tgt+tgt_pos
-        res=tgt
-        tgt=self.decoder_conv(tgt)
-        tgt=self.tgt_norm(res+tgt)
+        #res=tgt
+        #tgt=self.decoder_conv(tgt)
+        tgt=self.tgt_norm(tgt)
         # print(src.shape)
         # print(tgt.shape)
         # print(tgt_mask.shape)
