@@ -24,11 +24,3 @@ sbatch slurm_scripts/job_20.sh
 sbatch slurm_scripts/job_21.sh
 sbatch slurm_scripts/job_22.sh
 sbatch slurm_scripts/job_23.sh
-sbatch slurm_scripts/job_24.sh
-sbatch slurm_scripts/job_25.sh
-sbatch slurm_scripts/job_26.sh
-sbatch slurm_scripts/job_27.sh
-sbatch slurm_scripts/job_28.sh
-sbatch slurm_scripts/job_29.sh
-sbatch slurm_scripts/job_30.sh
-sbatch slurm_scripts/job_31.sh

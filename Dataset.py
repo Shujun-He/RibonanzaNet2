@@ -100,7 +100,7 @@ class RNADataset(Dataset):
 
 def compute_outer_product(rawread,sequence):
     sequence=sequence.unsqueeze(0)
-    difference=sequence!=rawread
+    difference= (sequence!=rawread) * (rawread!=5)
     difference=F.one_hot(difference.long(),2).float()#[:,:,-1]
     nreads=len(difference)
     outer_product=torch.einsum('bic,bjd->ijcd',difference,difference)/nreads
@@ -109,16 +109,17 @@ def compute_outer_product(rawread,sequence):
 
 
 class RawReadRNADataset(Dataset):
-    def __init__(self,indices, data, rnorm_data, max_len=192, max_seq=256):
+    def __init__(self,indices, data, max_len=192, max_seq=256):
         """
         raw read dataset
         tokens ACGUNP then start tokens for each experiment (DMS_nomod, DMS...etc)
         """
         self.indices=indices
         self.data=data
-        self.rnorm_data=rnorm_data
+        #self.rnorm_data=rnorm_data
         self.tokens={nt:i for i,nt in enumerate('ACGU')}
         self.tokens['P']=4
+        self.tokens['T']=3
         #self.train=train
         self.max_len=max_len
         self.max_seq=max_seq
@@ -130,53 +131,66 @@ class RawReadRNADataset(Dataset):
     def __getitem__(self, idx):
         #data[prefix]={'raw_data':raw_data,'csv':csv,'rawread_indices':rawread_indices,'sequences':sequences}
 
-        idx=self.indices[idx]
+        batch_idx,idx=self.indices[idx]
+
+        rawread_data=self.data[batch_idx][0]
+        hdf5_data=self.data[batch_idx][1]
 
         all_rawreads=[]
         all_rawreads_mask=[]
         all_outer_products=[]
-        for start_token,prefix in enumerate(self.data):
+        all_mutation_frequency=[]
+        for start_token,prefix in enumerate(rawread_data):
             #unpack data
-            rawread=self.data[prefix]['raw_data']
-            #csv=self.data[prefix]['csv']
-            rawread_indices=self.data[prefix]['rawread_indices']
-            sequences=self.data[prefix]['sequences']
+            start_token=start_token+2*batch_idx
+
+            rawread_indices=rawread_data[prefix]['rawread_indices']
+            sequences=rawread_data[prefix]['sequences']
 
 
-            start,end=rawread_indices[idx]
-            start=start-1
-            end=end-1
+            file,start,end=rawread_indices[idx]
+            if end<start: #no raw reads
+                rawreads=np.full((self.max_seq,self.max_len),255,dtype='int8')
+            # else:
+            #     rawreads=self.data[prefix]['raw_data'][file][start:end]
+            elif end-start>self.max_seq:#randomly pick max_seq uniformly
+                indices=np.random.choice(np.arange(start,end),self.max_seq,replace=False)
+                rawreads=rawread_data[prefix]['raw_data'][file][indices]
+            elif end-start<=self.max_seq:
+                #padd with 4
+                rawreads=rawread_data[prefix]['raw_data'][file][start:end]
+                rawreads=np.pad(rawreads,((0,self.max_seq-(end-start)),(0,0)),mode='constant',constant_values=255)
+
 
             sequence=[self.tokens[nt] for nt in sequences[idx].replace('T','U')]
             sequence=np.array(sequence)
 
             seq_length=len(sequence)
 
-            #handle special case where start>end (no raw reads)
-            if end<start:
-                end=start
+            #expand sequence to max_Seq
+            expanded_sequence=np.stack([sequence for _ in range(self.max_seq)],0)
+
+            #fill dots with expanded sequence
+            rawreads[rawreads==5]=expanded_sequence[rawreads==5]
 
             #if fewer than max_seq, pad with 4
             if seq_length<self.max_len:
                 sequence=np.pad(sequence,(0,self.max_len-seq_length),mode='constant',constant_values=4)
 
-            if end-start>self.max_seq:#randomly pick max_seq uniformly
-                indices=np.random.choice(np.arange(start,end),self.max_seq,replace=False)
-                rawreads=rawread[indices]
-            elif end-start<=self.max_seq:
-                #padd with 4
-                rawreads=rawread[start:end]
-                rawreads=np.pad(rawreads,((0,self.max_seq-(end-start)),(0,0)),mode='constant',constant_values=255)
+
 
             #rawreads=rawreads[:,:177]
 
-            #append start token 6 vector to the front of rawreads
+            
             if (end-start)>1:
-                outer_product=compute_outer_product(torch.tensor(rawread[start:end]),torch.tensor(sequence))
+                outer_product=compute_outer_product(torch.tensor(rawread_data[prefix]['raw_data'][file][start:end]),torch.tensor(sequence))
+                #outer_product=compute_outer_product(torch.tensor(rawreads),torch.tensor(sequence))
+                outer_product=outer_product[:,:,3]-outer_product[:,:,1]*outer_product[:,:,2]
+                outer_product=outer_product[:,:,None]
             else: #nans
-                outer_product=torch.full((rawreads.shape[1],rawreads.shape[1],4),np.nan)
+                outer_product=torch.full((rawreads.shape[1],rawreads.shape[1],1),np.nan)
 
-
+            #append start token 6 vector to the front of rawreads
             rawreads=np.concatenate([np.ones((rawreads.shape[0],1),dtype='int8')*(start_token+6),rawreads],axis=-1)
             
 
@@ -192,23 +206,35 @@ class RawReadRNADataset(Dataset):
             mask=torch.tensor(mask).float()
             rawreads_mask=torch.tensor(rawreads_mask).float()
 
-            
-            # print(outer_product.shape)
-            # exit()
+            mutation_frequency=(rawreads[:,1:]!=sequence).float().mean(0)
+
 
             all_rawreads.append(rawreads)
             all_rawreads_mask.append(rawreads_mask)
             all_outer_products.append(outer_product)
+            all_mutation_frequency.append(mutation_frequency)
 
         rawreads=torch.cat(all_rawreads)
         rawreads_mask=torch.cat(all_rawreads_mask)
         all_outer_products=torch.cat(all_outer_products,-1)
         
         #get r norm data
-        r_norm_index=self.rnorm_data['r_norm_index'][idx]
-        r_norm=self.rnorm_data['r_norm'][r_norm_index]
+        #r_norm_index=self.rnorm_data['r_norm_index'][idx]
+        r_norm=hdf5_data['r_norm'][idx]
         r_norm=torch.tensor(r_norm).float().clip(0,1)
-        snr=self.rnorm_data['signal_to_noise'][r_norm_index]
+        snr=hdf5_data['signal_to_noise'][idx]
+
+        #put rnorm, snr, and outer product in multichannel format
+        r_norm_mc=np.full((seq_length,2*len(self.data)),np.nan)
+        r_norm_mc[:,batch_idx*2:batch_idx*2+2]=r_norm
+        sn_mc=np.zeros(len(self.data)*2)
+        sn_mc[batch_idx*2:batch_idx*2+2]=snr
+        outer_product_mc=np.full((seq_length,seq_length,2*len(self.data)),np.nan)
+        outer_product_mc[:,:,batch_idx*2:batch_idx*2+2]=all_outer_products
+
+        r_norm_mc=torch.tensor(r_norm_mc).float().clip(0,1)
+        sn_mc=torch.tensor(sn_mc).float()
+        outer_product_mc=torch.tensor(outer_product_mc).float()
 
 
         data={'sequence':sequence,
@@ -217,7 +243,10 @@ class RawReadRNADataset(Dataset):
               "mask":mask,
               "rawreads_mask":rawreads_mask,
               "r_norm":r_norm,
-              "snr":snr}
+              "snr":snr,
+              "snr_mc":sn_mc,
+              "r_norm_mc":r_norm_mc,
+              "outer_product_mc":outer_product_mc}
 
 
         return data

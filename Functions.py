@@ -10,7 +10,45 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import torch.nn.functional as F
 
+
+def load_state_dict_ignore_shape(model, pretrained_path):
+    """
+    Loads the state dictionary from the given path into the model,
+    ignoring keys with mismatched weight shapes.
+    
+    Args:
+        model (torch.nn.Module): The model to load the weights into.
+        pretrained_path (str): The path to the saved state dictionary.
+        
+    Returns:
+        None
+    """
+    # Get the current state dict from the model
+    model_dict = model.state_dict()
+    
+    # Load the pretrained state dict
+    pretrained_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
+    
+    # Filter the pretrained state dict to only include keys that exist in the model
+    # and have matching shapes
+    filtered_dict = {}
+    for key, value in pretrained_dict.items():
+        if key in model_dict:
+            if model_dict[key].shape == value.shape:
+                filtered_dict[key] = value
+            else:
+                print(f"Skipping key '{key}' due to shape mismatch: "
+                      f"model shape {model_dict[key].shape} vs. pretrained shape {value.shape}")
+        else:
+            print(f"Skipping key '{key}' as it is not found in the current model.")
+    
+    # Update the model's state dict with the filtered dictionary and load it
+    model_dict.update(filtered_dict)
+    model.load_state_dict(model_dict)
+    print("Model state dict loaded with matching parameters.")
+
 def rawread_training_loss(batch, model, accelerator):
+    #normal labels
     src=batch['sequence']#.cuda()
     masks=batch['mask'].bool()#.cuda()
     rawreads=batch['rawreads']#.cuda()
@@ -18,6 +56,17 @@ def rawread_training_loss(batch, model, accelerator):
     outer_product=batch['outer_products']#.cuda()
     r_norm=batch['r_norm']#.cuda()
     snr=batch['snr']#.cuda()  
+    #multichannel labels
+    snr_mc=batch['snr_mc']#.cuda()
+    outer_product_mc=batch['outer_product_mc']#.cuda()
+    r_norm_mc=batch['r_norm_mc']#.cuda()
+
+    # print(snr_mc.shape)
+    # print(outer_product_mc.shape)
+    # print(r_norm_mc.shape)
+    # exit()
+
+
     labels=rawreads[:,:,1:]
 
     src_expand=src.unsqueeze(1).repeat(1,rawreads.shape[1],1)
@@ -29,17 +78,18 @@ def rawread_training_loss(batch, model, accelerator):
     #exit()
     loss=0
     snr_mask=snr>1.0
+    snr_mc_mask=snr_mc>1.0
     with accelerator.autocast():
         output, binary_output, outer_product_pred, r_norm_pred=model(src,rawreads[:,:,:-1],masks) #BxNrxLrxC
         
         #get loss masks
-        loss_masks =  (rawreads[:,:,1:] != 255) #mask out padding
+        loss_masks =  (rawreads[:,:,1:] != 255) * (rawreads[:,:,1:] != 5) #mask out padding and dots
         loss_masks = loss_masks.reshape(loss_masks.shape[0],2,-1,loss_masks.shape[-1])*snr_mask[:,:,None,None]
         loss_masks = loss_masks.reshape(loss_masks.shape[0],-1,loss_masks.shape[-1])
         
         #upweight mutated positions
         loss_weight = torch.ones_like(labels).float().to(output.device)
-        loss_weight[(src_expand != rawreads[:,:,1:])]=100.0 #set weight to 10 for mismatched bases
+        loss_weight[(src_expand != rawreads[:,:,1:])]=30.0 #set weight to 100 for mismatched bases
 
         #compute raw read loss
         raw_read_loss=F.cross_entropy(output[loss_masks],labels[loss_masks],reduction='none')*loss_weight[loss_masks]
@@ -55,19 +105,28 @@ def rawread_training_loss(batch, model, accelerator):
 
         #loss+=raw_read_loss
 
-        outer_product_mask=torch.ones_like(outer_product).bool().permute(0,3,1,2)
-        outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],2,-1,outer_product_mask.shape[-1],outer_product_mask.shape[-1])*snr_mask[:,:,None,None,None]
-        outer_product_mask=outer_product_mask.reshape(outer_product_mask.shape[0],-1,outer_product_mask.shape[-2],outer_product_mask.shape[-1])
+        outer_product_mask=torch.ones_like(outer_product_mc).bool().permute(0,3,1,2)
+        outer_product_mask=outer_product_mask*snr_mc_mask[:,:,None,None]
         outer_product_mask=outer_product_mask.permute(0,2,3,1)
+        outer_product_mask= ~torch.isnan(outer_product_mc)*outer_product_mask
         #~torch.isnan(outer_product)
-        outer_product_loss=F.mse_loss(outer_product_pred[outer_product_mask],outer_product[outer_product_mask])
+        outer_product_loss=F.mse_loss(outer_product_pred[outer_product_mask],outer_product_mc[outer_product_mask])
         # if outer_product_loss!=outer_product_loss:
+        #     pred=outer_product_pred[outer_product_mask]
+        #     true=outer_product[outer_product_mask]
+        #     print(outer_product_loss)
+        #     print(pred)
+        #     print(true)
+
+        #     print(pred[pred!=pred])
+        #     print(true[true!=true])
+
         #     exit()
         #loss+=outer_product_loss*0.2
 
         #mae loss on r norm
-        r_norm_mask=(~torch.isnan(r_norm))*snr_mask[:,None,:]
-        r_norm_loss=F.l1_loss(r_norm_pred[r_norm_mask],r_norm[r_norm_mask])
+        r_norm_mask=(~torch.isnan(r_norm_mc))*snr_mc_mask[:,None,:]
+        r_norm_loss=F.l1_loss(r_norm_pred[r_norm_mask],r_norm_mc[r_norm_mask])
         #loss+=r_norm_loss
         #total_r_norm_loss+=r_norm_loss.item()
 
@@ -278,6 +337,18 @@ class CSVLogger:
             string+="\n"
             f.write(string)
         return self
+
+def print_learning_rates(optimizer):
+    """
+    Prints the learning rate for each parameter group in the given optimizer.
+    
+    Args:
+        optimizer (torch.optim.Optimizer): The optimizer to inspect.
+    """
+    for i, param_group in enumerate(optimizer.param_groups):
+        lr = param_group.get('lr', None)
+        print(f"Learning rate for parameter group {i}: {lr}")
+
 
 if __name__=='__main__':
     print(load_config_from_yaml("configs/pairwise.yaml"))

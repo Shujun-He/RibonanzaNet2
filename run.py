@@ -14,6 +14,7 @@ from torch.distributed.fsdp import StateDictType, FullStateDictConfig, ShardedSt
 from accelerate.utils.fsdp_utils import save_fsdp_model
 import multiprocessing
 import h5py
+from load_rawread import load_rawread, get_rawread_data
 
 #multiprocessing.set_start_method("spawn")
 
@@ -52,101 +53,14 @@ logger=CSVLogger(['epoch','train_loss','train_rawread_loss','train_binary_rawrea
                   
 
 
-# with open('data/data_dict.p','rb') as f:
-#     data_dict=pickle.load(f)
-#     print(data_dict.keys())
-
-# List of prefixes
-prefixes = [
-    "RTB000_Marathon_Bicine_3pct_DMS",
-    "RTB002_SSII_Bicine_2A3",
-]
-
-filter_prefixes = [
-    "RTB000_Marathon_Bicine_3pct_DMS",
-    "RTB002_SSII_Bicine_2A3",
-]
-input_dir = '/lustre/fs0/scratch/shujun/BothLanes_RawReads'
-lengths=[599528185,496581631]
-
-hdf5_data=h5py.File(f'{input_dir}/OneMil.v0.1.0.hdf5','r')
-#exit()
-
-min_read = 128
-#create filter vector where num_reads>min_read for all prefixes
-# filter_vector=[]
-# for prefix, length in zip(filter_prefixes, lengths):
-#     csv=pl.read_csv(f'{input_dir}/{prefix}.index.csv')
-#     filter_vector.append(csv["num_reads"].to_numpy()>min_read)
-
-# #filter_vector=np.stack(filter_vector,-1).sum(-1)==len(prefixes)
-# filter_vector=np.stack(filter_vector,-1).sum(-1)>0
-filter_vector=hdf5_data['signal_to_noise'][:].max(-1)>1.0
-#exit()
 
 
-#exit()
-data={}
-for prefix, length in zip(prefixes, lengths):
-
-    raw_data = np.memmap(f'{input_dir}/{prefix}.align_reads.txt.memmap', dtype=np.uint8, mode='r', shape=(length, 177))
-    csv=pl.read_csv(f'{input_dir}/{prefix}.index.csv')#[:1000]
-    csv=csv.filter(filter_vector)
-    rawread_indices=[[i,j] for i,j in zip(csv['read_start'].to_numpy(),csv['read_end'].to_numpy())]
-    sequences=csv['sequence'].to_list()
-
-    data[prefix]={'raw_data':raw_data,'rawread_indices':rawread_indices,'sequences':sequences}
-
-#save rnorm to memmap
-rnorm_data={}
-rnorm_data['r_norm']=hdf5_data['r_norm']#[filter_vector]
-rnorm_data['r_norm_index']=np.arange(len(filter_vector))[filter_vector]
-rnorm_data['signal_to_noise']=hdf5_data['signal_to_noise']
-#exit()
-
-#exit()
-
-#StratifiedKFold on dataset
-kfold=KFold(n_splits=config.nfolds,shuffle=True, random_state=0)
-fold_indices={}
-# dataset_name=csv['dataset_name'].to_numpy()
-indices=np.arange(len(csv))
-#indices=np.arange(100)
-for i, (train_index, test_index) in enumerate(kfold.split(indices)):
-    fold_indices[i]=train_index, test_index
-#exit()
-
-train_indices=fold_indices[config.fold][0]
-val_indices=fold_indices[config.fold][1]
-#exit()
-# for data scaling experiments
-if config.use_data_percentage<1:
-    print(f"Only using {config.use_data_percentage:.02f} of data")
-    size=int(config.use_data_percentage*len(train_indices))
-    train_indices=np.random.choice(train_indices,size,replace=False)
-    print(f"number of sequences in train {len(train_indices)} after subsampling")
-
-# if config.use_dirty_data:
-#     print(f"number of sequences in train {len(train_indices)}")
-#     train_indices=np.concatenate([train_indices,dirty_data_indices])
-#     print(f"number of sequences in train {len(train_indices)} after using dirty data")
-
-#exit()
-
-# plot_and_save_bar_chart([data_dict['dataset_name'][i] for i in train_indices],
-#                 f"dataset_cnt.png")
+all_data, train_indices, val_indices = get_rawread_data(config)
 
 
-if hasattr(config,"dataset2drop"):
-    print(f"dropping {config.dataset2drop} from training data")
-    
-    # print(set(data_dict['dataset_name']))
-    # exit()
-    train_indices=dataset_dropout(data_dict['dataset_name'], train_indices, config.dataset2drop)
 
-
-print(f"train shape: {train_indices.shape}")
-print(f"val shape: {val_indices.shape}")
+print(f"train shape: {len(train_indices)}")
+print(f"val shape: {len(val_indices)}")
 
 
 
@@ -157,7 +71,7 @@ seq_length=256
 # exit()
 num_workers = min(config.batch_size, multiprocessing.cpu_count() // 8)
 
-train_dataset=RawReadRNADataset(train_indices,data,rnorm_data,max_len=config.max_len,max_seq=config.max_seq)
+train_dataset=RawReadRNADataset(train_indices,all_data,max_len=config.max_len,max_seq=config.max_seq)
 train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=True,
                         num_workers=num_workers,
                         pin_memory=True,
@@ -168,7 +82,7 @@ sample=train_dataset[0]
 
 #exit()
 
-val_dataset=RawReadRNADataset(val_indices,data,rnorm_data,max_len=config.max_len)
+val_dataset=RawReadRNADataset(val_indices,all_data,max_len=config.max_len)
 val_loader=DataLoader(val_dataset,batch_size=config.test_batch_size,shuffle=False,
                         num_workers=min(config.batch_size,16))
 
@@ -179,6 +93,10 @@ print(accelerator.distributed_type)
 
 
 model=RibonanzaNet(config)#.cuda()
+
+
+if config.previous_checkpoint != 'none':
+    load_state_dict_ignore_shape(model,config.previous_checkpoint)
 
 model=accelerator.prepare(model)
 
@@ -201,11 +119,11 @@ val_criterion=torch.nn.CrossEntropyLoss(reduction='none')
 cos_epoch=int(config.epochs*0.75)-1
 lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,(config.epochs-cos_epoch)*len(train_loader)//config.gradient_accumulation_steps)
 
-warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
-                                    total_steps=len(train_loader),
-                                    final_lr=config.learning_rate)
+# warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
+#                                     total_steps=len(train_loader),
+#                                     final_lr=config.learning_rate)
 #exit()
-optimizer, train_loader, val_loader, lr_schedule, warmup_schduler= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule, warmup_schduler)
+optimizer, train_loader, val_loader, lr_schedule= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule)
 
 @torch.compile(fullgraph=False)
 def optimizer_step():
@@ -216,6 +134,7 @@ if args.compile == 'true':
 #model = model
 
 best_val_loss=np.inf
+total_steps=0
 for epoch in range(config.epochs):
 
     # training loop
@@ -227,11 +146,36 @@ for epoch in range(config.epochs):
     total_raw_read_loss=0
     total_r_norm_loss=0
     model.train()
-    #for batch in tqdm(train_loader):
+    #if config.use_gradient_checkpoint:
+    model.set_global_attr("use_gradient_checkpoint",config.use_gradient_checkpoint)
 
     for idx, batch in enumerate(tbar):
         
+        # print(batch['sequence'].shape)
+        # print(batch['mask'].shape)
+        # print(batch['rawreads'].shape)
+        # print(batch['rawreads_mask'].shape)
+        # print(batch['r_norm'].shape)
+        # print(batch['snr'].shape)
+
+
+        # exit()
         raw_read_loss, binary_loss, outer_product_loss, r_norm_loss = rawread_training_loss(batch, model, accelerator)
+        
+        #if any loss is nan, exit
+        # if torch.isnan(raw_read_loss).any():
+        #     print("raw read loss is nan")
+        #     exit()
+        # if torch.isnan(binary_loss).any():
+        #     print("binary loss is nan")
+        #     exit()          
+        # if torch.isnan(outer_product_loss).any():
+        #     print("outer product loss is nan")
+        #     exit()
+        # if torch.isnan(r_norm_loss).any():
+        #     print("r norm loss is nan")
+        #     exit()
+            
 
         #weighted loss from config
         loss = config.raw_read_loss_weight * raw_read_loss +\
@@ -251,16 +195,19 @@ for epoch in range(config.epochs):
         #loss.backward()
         if (idx + 1) % config.gradient_accumulation_steps == 0:
             #if accelerator.sync_gradients:
+            total_steps+=1
             accelerator.clip_grad_norm_(model.parameters(), config.clip_grad_norm)
             #optimizer.step()
             optimizer_step()
             optimizer.zero_grad()
             if epoch > cos_epoch:
                 lr_schedule.step()
-            elif epoch == 0:
-                warmup_schduler.step()
+            # elif epoch == 0:
+            #     warmup_schduler.step()
 
-        
+        if total_steps % config.log_interval == 0:
+            accelerator.save_state(f"models/step_{total_steps}",safe_serialization=False)
+
         total_loss+=loss.item()
         #exit()
         tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1):.2f} Outer Product Loss: \
@@ -269,6 +216,11 @@ Binary Loss: {total_binary_loss/(idx+1):.2f} R Norm Loss: {total_r_norm_loss/(id
         
 
         #break
+
+    print(f'learning rate at end of epoch {epoch}')
+    print_learning_rates(optimizer)
+
+    
     train_loss=total_loss/(idx+1)
     total_outer_product_loss=total_outer_product_loss/(idx+1)
     total_raw_read_loss=total_raw_read_loss/(idx+1)
@@ -277,6 +229,7 @@ Binary Loss: {total_binary_loss/(idx+1):.2f} R Norm Loss: {total_r_norm_loss/(id
 
     # validation loop
     model.eval()
+    model.set_global_attr("use_gradient_checkpoint",False)
     tbar = tqdm(val_loader)
     val_loss=0
     total_val_outer_product_loss=0

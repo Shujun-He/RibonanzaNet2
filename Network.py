@@ -331,7 +331,7 @@ class ConvTransformerEncoderLayer(nn.Module):
 
         #pair track ops
         #pairwise_features=pairwise_features+self.outer_product_mean(src)
-        if self.training:
+        if self.use_gradient_checkpoint:
             pairwise_features=pairwise_features+checkpoint.checkpoint(self.outer_product_mean, src, use_reentrant=False)
         else:
             pairwise_features=pairwise_features+self.outer_product_mean(src)
@@ -341,7 +341,9 @@ class ConvTransformerEncoderLayer(nn.Module):
             pairwise_features=pairwise_features+self.pair_attention_dropout_out(self.triangle_attention_out(pairwise_features,src_mask))
             pairwise_features=pairwise_features+self.pair_attention_dropout_in(self.triangle_attention_in(pairwise_features,src_mask))
         #pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
-        if self.training:
+        if self.use_gradient_checkpoint:
+            # print("using grad checkpointing")
+            # exit()
             pairwise_features=pairwise_features+checkpoint.checkpoint(self.pair_transition, pairwise_features, use_reentrant=False)
         else:
             pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
@@ -486,20 +488,54 @@ class TriangleMultiplicativeModule(nn.Module):
 
     def forward(self, x, src_mask = None):
         
-        if self.training:
+        if self.use_gradient_checkpoint:
             left, right, out_gate = checkpoint.checkpoint(self.get_left_right, [x, src_mask], use_reentrant=False)
         else:
             left, right, out_gate = self.get_left_right([x, src_mask])
 
         out = einsum(self.mix_einsum_eq, left, right)
 
-        if self.training:
-            out = checkpoint.checkpoint(self.output_gate, [out, out_gate], use_reentrant=False)
-        else:
-            out = self.output_gate([out, out_gate])
+        # if self.use_gradient_checkpoint:
+        #     out = checkpoint.checkpoint(self.output_gate, [out, out_gate], use_reentrant=False)
+        # else:
+        out = self.output_gate([out, out_gate])
 
 
         return self.to_out(out)
+    # def forward(self, x, src_mask = None):
+    #     src_mask=src_mask.unsqueeze(-1).float()
+    #     mask = torch.matmul(src_mask,src_mask.permute(0,2,1))
+
+    #     # print(mask.shape)
+    #     # plt.imshow(mask[0].detach().cpu())
+    #     # plt.savefig('mask.png')
+    #     # exit()
+
+    #     assert x.shape[1] == x.shape[2], 'feature map must be symmetrical'
+    #     if exists(mask):
+    #         mask = rearrange(mask, 'b i j -> b i j ()')
+
+    #     x = self.norm(x)
+
+    #     left = self.left_proj(x)
+    #     right = self.right_proj(x)
+
+    #     if exists(mask):
+    #         left = left * mask
+    #         right = right * mask
+
+    #     left_gate = self.left_gate(x).sigmoid()
+    #     right_gate = self.right_gate(x).sigmoid()
+    #     out_gate = self.out_gate(x).sigmoid()
+
+    #     left = left * left_gate
+    #     right = right * right_gate
+
+    #     out = einsum(self.mix_einsum_eq, left, right)
+
+    #     out = self.to_out_norm(out)
+    #     out = out * out_gate
+    #     return self.to_out(out)
 
 
 class RibonanzaNet(nn.Module):
@@ -533,7 +569,7 @@ class RibonanzaNet(nn.Module):
             scale_factor=1/(i+1)**0.5
             #scale_factor=i+1
             #scale_factor=0
-            recursive_linear_init(layer,scale_factor)
+            #recursive_linear_init(layer,scale_factor)
 
 
         
@@ -547,9 +583,9 @@ class RibonanzaNet(nn.Module):
         
         self.encoder = nn.Embedding(config.ntoken, config.ninp, padding_idx=4)
         self.decoder = nn.Linear(config.decoder_ninp,config.nclass)
-        recursive_linear_init(self.decoder,scale_factor)
+        #recursive_linear_init(self.decoder,scale_factor)
         
-        self.decoder_embedding=nn.Embedding(config.ntoken, config.decoder_ninp, padding_idx=4)
+        self.decoder_embedding=nn.Embedding(1000, config.decoder_ninp, padding_idx=4)
         self.decoder_layers=[]
         for i in range(config.decoder_nlayers):
             scale_factor=1/(config.nlayers+i+1)**0.5
@@ -557,7 +593,7 @@ class RibonanzaNet(nn.Module):
             layer=OptimizedDecoderLayer(config.decoder_ninp, config.ninp, config.decoder_nhead, config.pairwise_dimension, config.dropout)
             # layer=nn.TransformerDecoderLayer(d_model=config.ninp, nhead=config.nhead, 
             #                                             dim_feedforward=config.ninp*4, dropout=config.dropout, batch_first=True)
-            recursive_linear_init(layer,scale_factor)
+            #recursive_linear_init(layer,scale_factor)
             self.decoder_layers.append(layer)
         self.decoder_layers=nn.ModuleList(self.decoder_layers)
 
@@ -566,11 +602,12 @@ class RibonanzaNet(nn.Module):
 
         #self.decoder_conv=nn.Sequential(CausalConv1d(config.decoder_ninp,config.decoder_ninp,5))
 
-        self.outer_product_head=nn.Linear(config.pairwise_dimension,8)
+        self.outer_product_head=nn.Sequential(nn.LayerNorm(config.pairwise_dimension),
+                                              nn.Linear(config.pairwise_dimension,4))
 
         self.binary_head=nn.Linear(config.decoder_ninp,1)
 
-        self.r_norm_head=nn.Linear(config.ninp,2)
+        self.r_norm_head=nn.Linear(config.ninp,4)
 
     def custom(self, module):
         def custom_forward(*inputs):
@@ -588,7 +625,9 @@ class RibonanzaNet(nn.Module):
         # outer_product = rearrange(outer_product, 'b i j c d -> b i j (c d)')
         # print(outer_product.shape)
         #pairwise_features=self.outer_product_mean(src)
-        if self.training:
+        if self.use_gradient_checkpoint:
+            # print("using grad checkpointing")
+            # exit()
             pairwise_features=checkpoint.checkpoint(self.custom(self.outer_product_mean), src, use_reentrant=False)
         else:
             pairwise_features=self.outer_product_mean(src)
@@ -635,8 +674,10 @@ class RibonanzaNet(nn.Module):
         for layer in self.decoder_layers:
             input=[tgt, src, pairwise_features, tgt_mask, None, False]
             #tgt, _ = layer(input)
-            #tgt , _ =checkpoint.checkpoint(self.custom(layer), input, use_reentrant=False)
-            tgt , _ =layer(input)
+            if self.use_gradient_checkpoint:
+                tgt , _ =checkpoint.checkpoint(self.custom(layer), input, use_reentrant=False)
+            else:
+                tgt , _ =layer(input)
         
         # print(tgt.shape)
         # exit()
@@ -688,6 +729,11 @@ class RibonanzaNet(nn.Module):
 
 
         return src, pairwise_features
+
+    def set_global_attr(self, key, value):
+        def _setter(module):
+            setattr(module, key, value)
+        self.apply(_setter)
 
 class TriangleAttention(nn.Module):
     def __init__(self, in_dim=128, dim=32, n_heads=4, wise='row'):

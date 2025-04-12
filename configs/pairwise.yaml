@@ -1,17 +1,19 @@
 # Model hyperparameters
 learning_rate: 0.002 # The learning rate for the optimizer
-batch_size: 2        # Number of samples per batch
-test_batch_size: 2        # Number of samples per batch
-epochs: 10            # Total training epochs
+batch_size: 8        # Number of samples per batch
+test_batch_size: 8        # Number of samples per batch
+epochs: 1            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
 weight_decay: 0.0001
 k: 5 #not used
 ninp: 384
 nlayers: 48
+decoder_ninp: 256
+decoder_nhead: 8
 decoder_nlayers: 3
 nclass: 8
-ntoken: 1000 #AUGC + padding/N token
+ntoken: 6 #AUGC + padding/N token
 nhead: 12
 #use_bpp: False
 use_flip_aug: false
@@ -23,6 +25,8 @@ dim_msa: 32
 clip_grad_norm: 1.0
 max_len: 177
 max_seq: 128
+log_interval: 2000
+use_gradient_checkpoint: true
 
 #Data scaling
 use_data_percentage: 1
@@ -41,3 +45,5 @@ fold: 0
 nfolds: 6
 input_dir: "../../input/"
 gpu_id: "0"
+previous_checkpoint: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
+#previous_checkpoint: "none"
