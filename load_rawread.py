@@ -97,10 +97,10 @@ def get_rawread_data(config):
     input_dir='../../input/'
     #config = load_config_from_yaml("configs/pairwise.yaml")
     hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
-               'Ribonanza2B_full40B.v0.1.0.hdf5']
-            #    'Ribonanza2C_full40B.v0.1.0.hdf5',
-            #    'Ribonanza2D.v0.1.0.hdf5']
-            #    'Ribonanza2E.v0.1.0.hdf5']
+               'Ribonanza2B_full40B.v0.1.0.hdf5',
+               'Ribonanza2C_full40B.v0.1.0.hdf5',
+               'Ribonanza2D.v0.1.0.hdf5',
+               'Ribonanza2E.v0.1.0.hdf5']
 
     raw_read_folders=["../../Ribonanza2A_RawReads/tmp_merge_align/",
                       "../../Ribonanza2B_RawReads/tmp_merge_align/",
@@ -108,7 +108,7 @@ def get_rawread_data(config):
                       "../../Ribonanza2D_RawReads/tmp_merge_align/",
                       "../../Ribonanza2E_RawReads/tmp_merge_align/"]
 
-    snr_cutoff=0.5
+    snr_cutoff=1.0
 
     # rawread_data=[]
     # hdf5_data=[]

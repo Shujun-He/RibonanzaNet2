@@ -17,7 +17,7 @@ def process_and_plot(config_indices, score_file_pattern, csv_pattern, parquet_pa
             print(f"Error reading score file {file_path}: {e}")
 
     scores = np.array(scores)
-    sorted_indices = np.argsort(scores)[::-1][:int(len(scores) * 0.2)]
+    sorted_indices = np.argsort(scores)[::-1][:int(len(scores) * 0.25)]
 
     def process_files(pattern, sorted_indices):
         avg_F1s, avg_CP_F1s = [], []

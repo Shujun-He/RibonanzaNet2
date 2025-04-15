@@ -603,11 +603,11 @@ class RibonanzaNet(nn.Module):
         #self.decoder_conv=nn.Sequential(CausalConv1d(config.decoder_ninp,config.decoder_ninp,5))
 
         self.outer_product_head=nn.Sequential(nn.LayerNorm(config.pairwise_dimension),
-                                              nn.Linear(config.pairwise_dimension,4))
+                                              nn.Linear(config.pairwise_dimension,config.nexperiments*2))
 
         self.binary_head=nn.Linear(config.decoder_ninp,1)
 
-        self.r_norm_head=nn.Linear(config.ninp,4)
+        self.r_norm_head=nn.Linear(config.ninp,config.nexperiments*2)
 
     def custom(self, module):
         def custom_forward(*inputs):

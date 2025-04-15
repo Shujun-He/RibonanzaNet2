@@ -7,6 +7,13 @@ import torch.nn.functional as F
 #import polars as pl
 #tokens='ACGU().BEHIMSX'
 
+def set_near_diagonal_to_nan(matrix, k=4):
+    assert matrix.shape[0] == matrix.shape[1], "Matrix must be square"
+    n = matrix.shape[0]
+    mask = np.abs(np.arange(n)[:, None] - np.arange(n)) < k
+    matrix[mask] = np.nan
+    return matrix
+
 def load_bpp(filename,seq_length=177):
     matrix = [[0.0 for x in range(seq_length)] for y in range(seq_length)]
  #   #matrix=0
@@ -171,7 +178,7 @@ class RawReadRNADataset(Dataset):
             expanded_sequence=np.stack([sequence for _ in range(self.max_seq)],0)
 
             #fill dots with expanded sequence
-            rawreads[rawreads==5]=expanded_sequence[rawreads==5]
+            #rawreads[rawreads==5]=expanded_sequence[rawreads==5]
 
             #if fewer than max_seq, pad with 4
             if seq_length<self.max_len:
@@ -186,6 +193,7 @@ class RawReadRNADataset(Dataset):
                 outer_product=compute_outer_product(torch.tensor(rawread_data[prefix]['raw_data'][file][start:end]),torch.tensor(sequence))
                 #outer_product=compute_outer_product(torch.tensor(rawreads),torch.tensor(sequence))
                 outer_product=outer_product[:,:,3]-outer_product[:,:,1]*outer_product[:,:,2]
+                outer_product=set_near_diagonal_to_nan(outer_product)
                 outer_product=outer_product[:,:,None]
             else: #nans
                 outer_product=torch.full((rawreads.shape[1],rawreads.shape[1],1),np.nan)
