@@ -95,18 +95,18 @@ def load_rawread(hdf5_data,folder="../../Ribonanza2A_RawReads/tmp_merge_align/")
 def get_rawread_data(config):
 
     input_dir='../../input/'
-    #config = load_config_from_yaml("configs/pairwise.yaml")
+    config = load_config_from_yaml("configs/pairwise.yaml")
     hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
                'Ribonanza2B_full40B.v0.1.0.hdf5',
                'Ribonanza2C_full40B.v0.1.0.hdf5',
                'Ribonanza2D.v0.1.0.hdf5',
                'Ribonanza2E.v0.1.0.hdf5']
 
-    raw_read_folders=["../../Ribonanza2A_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2B_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2C_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2D_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2E_RawReads/tmp_merge_align/"]
+    raw_read_files=[["../../Ribonanza2A_RawReads/RTB008_GenScript_DMS.memmap","../../Ribonanza2A_RawReads/RTB010_GenScript_2A3.memmap"],
+                      ["../../Ribonanza2B_RawReads/RTB004_Marathon_DMS.memmap","../../Ribonanza2B_RawReads/RTB006_SSII_2A3.memmap"],
+                      ["../../Ribonanza2C_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2C_RawReads/RTB002_SSII_2A3.memmap"],
+                      ["../../Ribonanza2D_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2D_RawReads/RTB002_SSII_2A3.memmap"],
+                      ["../../Ribonanza2E_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2E_RawReads/RTB002_SSII_2A3.memmap"]] 
 
     snr_cutoff=1.0
 
@@ -116,102 +116,38 @@ def get_rawread_data(config):
     all_train_indices=[]
     all_val_indices=[]
     cnt=0
-    for hdf_file, folder in zip(hdf_files,raw_read_folders):
+    for hdf_file, memmap_files in zip(hdf_files,raw_read_files):
         print("Loading",hdf_file)
-        print("Loading",folder)
-        #hdf5_data=pl.read_parquet(hdf_file)
-        rawread,hdf5=load_rawread(input_dir+hdf_file,folder=folder)
-        all_data.append([rawread,hdf5])
+        #hdf5=pl.read_parquet(input_dir+hdf_file)
+        #rawread,hdf5=load_rawread(input_dir+hdf_file,folder=folder)
+        hdf5=h5py.File(input_dir+hdf_file, 'r')
+
+        raw_read_data={}
+        for f in memmap_files:
+            print(f)
+            metadata=pl.read_csv(f.replace(".memmap","_meta_data.csv"))
+            #print(metadata.head())
+            print(metadata['read_end_cat'].max()/1e9)
+            #exit()
+
+            nrows=metadata['read_end_cat'].max()
+
+            memmap=np.memmap(f,mode='r',dtype='uint8',shape=(nrows,177))
+            rawread_indices=[(i-1,j) for i,j in zip(metadata['read_start_cat'],metadata['read_end_cat'])]
+            print(len(rawread_indices))
+            raw_read_data[f]={'raw_data':memmap,'rawread_indices':rawread_indices}
+        
+
+        # print(raw_read_data.keys())
+        # exit()
+        # continue
+
+        all_data.append([raw_read_data,hdf5])
 
         if hdf_file=="Ribonanza2A_Genscript.v0.1.0.hdf5": #keep part of A as val
             snr=hdf5['signal_to_noise'][:]
             high_quality_indices = np.where((snr>1.).sum(1)==2)[0]
             dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1)&((snr>1.).sum(1)!=2))[0]
-            #dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1))[0]
-
-            #extract high quality indices from dirty data indices
-            # high_quality_indices=[i for i in high_quality_indices if i in dirty_data_indices]
-            # print(f"{hdf_file} high quality data",len(high_quality_indices))
-            # print(f"{hdf_file} dirty data",len(dirty_data_indices))
-
-            #dataset names
-            sublib_data=pl.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
-
-            #StratifiedKFold on dataset
-            kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
-            fold_indices={}
-            high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
-            for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
-                fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
-            #exit()
-
-            train_indices=fold_indices[config.fold][0]
-            val_indices=fold_indices[config.fold][1]
-
-
-
-
-            train_indices=np.concatenate([train_indices,dirty_data_indices])
-
-            print("train_indices",len(train_indices))
-            print("val_indices",len(val_indices))
-            #exit()
-            #print(hdf_file)
-            all_train_indices.extend([(cnt,int(i)) for i in train_indices])
-            all_val_indices.extend([(cnt,int(i)) for i in val_indices])
-        else:
-            snr=hdf5['signal_to_noise'][:]
-            dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1))[0]
-            all_train_indices.extend([(cnt,int(i)) for i in dirty_data_indices])
-            print(f"{hdf_file} dirty data",len(dirty_data_indices))
-
-        cnt+=1    
-
-    return all_data, all_train_indices, all_val_indices
-
-
-if __name__=="__main__":
-    # data=load_rawread()
-    # print(data.keys())  
-    #print(rawread_indices.keys())
-    input_dir='../../input/'
-    config = load_config_from_yaml("configs/pairwise.yaml")
-    hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
-               'Ribonanza2B_full40B.v0.1.0.hdf5']
-            #    'Ribonanza2C_full40B.v0.1.0.hdf5',
-            #    'Ribonanza2D.v0.1.0.hdf5']
-            #    'Ribonanza2E.v0.1.0.hdf5']
-
-    raw_read_folders=["../../Ribonanza2A_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2B_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2C_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2D_RawReads/tmp_merge_align/",
-                      "../../Ribonanza2E_RawReads/tmp_merge_align/"]
-
-    snr_cutoff=0.5
-
-    # rawread_data=[]
-    # hdf5_data=[]
-    all_data=[]
-    all_train_indices=[]
-    all_val_indices=[]
-    cnt=0
-    for hdf_file, folder in zip(hdf_files,raw_read_folders):
-        print("Loading",hdf_file)
-        #hdf5_data=pl.read_parquet(hdf_file)
-        rawread,hdf5=load_rawread(input_dir+hdf_file,folder=folder)
-        all_data.append([rawread,hdf5])
-
-        if hdf_file=="Ribonanza2A_Genscript.v0.1.0.hdf5": #keep part of A as val
-            snr=hdf5['signal_to_noise'][:]
-            high_quality_indices = np.where((snr>1.).sum(1)==2)[0]
-            dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1)&((snr>1.).sum(1)!=2))[0]
-            #dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1))[0]
-
-            #extract high quality indices from dirty data indices
-            # high_quality_indices=[i for i in high_quality_indices if i in dirty_data_indices]
-            # print(f"{hdf_file} high quality data",len(high_quality_indices))
-            # print(f"{hdf_file} dirty data",len(dirty_data_indices))
 
             #dataset names
             sublib_data=pl.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
@@ -245,3 +181,106 @@ if __name__=="__main__":
             print(f"{hdf_file} dirty data",len(dirty_data_indices))
 
         cnt+=1    
+
+
+    print("train_indices",len(all_train_indices))
+    print("val_indices",len(all_val_indices)) 
+
+    return all_data, all_train_indices, all_val_indices
+
+
+if __name__=="__main__":
+    # data=load_rawread()
+    # print(data.keys())  
+    #print(rawread_indices.keys())
+    input_dir='../../input/'
+    config = load_config_from_yaml("configs/pairwise.yaml")
+    hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
+               'Ribonanza2B_full40B.v0.1.0.hdf5',
+               'Ribonanza2C_full40B.v0.1.0.hdf5',
+               'Ribonanza2D.v0.1.0.hdf5',
+               'Ribonanza2E.v0.1.0.hdf5']
+
+    raw_read_files=[["../../Ribonanza2A_RawReads/RTB008_GenScript_DMS.memmap","../../Ribonanza2A_RawReads/RTB010_GenScript_2A3.memmap"],
+                      ["../../Ribonanza2B_RawReads/RTB004_Marathon_DMS.memmap","../../Ribonanza2B_RawReads/RTB006_SSII_2A3.memmap"],
+                      ["../../Ribonanza2C_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2C_RawReads/RTB002_SSII_2A3.memmap"],
+                      ["../../Ribonanza2D_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2D_RawReads/RTB002_SSII_2A3.memmap"],
+                      ["../../Ribonanza2E_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2E_RawReads/RTB002_SSII_2A3.memmap"]] 
+
+    snr_cutoff=1.0
+
+    # rawread_data=[]
+    # hdf5_data=[]
+    all_data=[]
+    all_train_indices=[]
+    all_val_indices=[]
+    cnt=0
+    for hdf_file, memmap_files in zip(hdf_files,raw_read_files):
+        print("Loading",hdf_file)
+        #hdf5=pl.read_parquet(input_dir+hdf_file)
+        #rawread,hdf5=load_rawread(input_dir+hdf_file,folder=folder)
+        hdf5=h5py.File(input_dir+hdf_file, 'r')
+
+        raw_read_data={}
+        for f in memmap_files:
+            print(f)
+            metadata=pl.read_csv(f.replace(".memmap","_meta_data.csv"))
+            #print(metadata.head())
+            print(metadata['read_end_cat'].max()/1e9)
+            #exit()
+
+            nrows=metadata['read_end_cat'].max()
+
+            memmap=np.memmap(f,mode='r',dtype='uint8',shape=(nrows,177))
+            rawread_indices=[(i-1,j) for i,j in zip(metadata['read_start_cat'],metadata['read_end_cat'])]
+            
+            raw_read_data[f]={'raw_data':memmap,'rawread_indices':rawread_indices}
+        
+
+        # print(raw_read_data.keys())
+        # exit()
+        # continue
+
+        all_data.append([raw_read_data,hdf5])
+
+        if hdf_file=="Ribonanza2A_Genscript.v0.1.0.hdf5": #keep part of A as val
+            snr=hdf5['signal_to_noise'][:]
+            high_quality_indices = np.where((snr>1.).sum(1)==2)[0]
+            dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1)&((snr>1.).sum(1)!=2))[0]
+
+            #dataset names
+            sublib_data=pl.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
+
+            #StratifiedKFold on dataset
+            kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+            fold_indices={}
+            high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
+            for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
+                fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
+            #exit()
+
+            train_indices=fold_indices[config.fold][0]
+            val_indices=fold_indices[config.fold][1]
+
+
+
+
+            train_indices=np.concatenate([train_indices,dirty_data_indices])
+
+            print("train_indices",len(train_indices))
+            print("val_indices",len(val_indices))
+            #exit()
+            #print(hdf_file)
+            all_train_indices.extend([(cnt,i) for i in train_indices])
+            all_val_indices.extend([(cnt,i) for i in val_indices])
+        else:
+            snr=hdf5['signal_to_noise'][:]
+            dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1))[0]
+            all_train_indices.extend([(cnt,i) for i in dirty_data_indices])
+            print(f"{hdf_file} dirty data",len(dirty_data_indices))
+
+        cnt+=1    
+
+
+    print("train_indices",len(all_train_indices))
+    print("val_indices",len(all_val_indices))

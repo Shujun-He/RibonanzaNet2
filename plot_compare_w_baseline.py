@@ -37,8 +37,8 @@ from glob import glob
 import pandas as pd
 import matplotlib.pyplot as plt
 
-folders=["../../exps/test10","../../exps/test42",'.','/lustre/fs0/scratch/shujun/8m_exps/test4_init_fromrn1_pl_bs1']
-labels=["Rnet1", "Ribonanza1 data",'self','baseline']
+folders=["../../exps/test10","../../exps/test42",'.','/lustre/fs0/scratch/shujun/8m_exps/test32']
+labels=["Rnet1", "Ribonanza1 data",'rawread ABCDE\n SNR>1\nstart token bugged','Rnet2-Alpha']
 all_folder_metrics = {}
 all_folder_cp_metrics = {}
 #folder='test4'

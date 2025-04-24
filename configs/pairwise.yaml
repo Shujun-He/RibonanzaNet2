@@ -1,5 +1,5 @@
 # Model hyperparameters
-learning_rate: 0.002 # The learning rate for the optimizer
+learning_rate: 0.001 # The learning rate for the optimizer
 batch_size: 8        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
 epochs: 1            # Total training epochs
@@ -13,6 +13,7 @@ decoder_ninp: 256
 decoder_nhead: 8
 decoder_nlayers: 3
 nclass: 8
+nexperiments: 5
 ntoken: 6 #AUGC + padding/N token
 nhead: 12
 #use_bpp: False

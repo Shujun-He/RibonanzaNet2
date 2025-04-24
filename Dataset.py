@@ -152,30 +152,33 @@ class RawReadRNADataset(Dataset):
             start_token=start_token+2*batch_idx
 
             rawread_indices=rawread_data[prefix]['rawread_indices']
-            sequences=rawread_data[prefix]['sequences']
+            #sequences=rawread_data[prefix]['sequences']
 
-
-            file,start,end=rawread_indices[idx]
+            # print(idx)
+            # print(len(rawread_indices))
+            start,end=rawread_indices[idx]
             if end<start: #no raw reads
                 rawreads=np.full((self.max_seq,self.max_len),255,dtype='int8')
             # else:
             #     rawreads=self.data[prefix]['raw_data'][file][start:end]
             elif end-start>self.max_seq:#randomly pick max_seq uniformly
                 indices=np.random.choice(np.arange(start,end),self.max_seq,replace=False)
-                rawreads=rawread_data[prefix]['raw_data'][file][indices]
+                rawreads=rawread_data[prefix]['raw_data'][indices]
             elif end-start<=self.max_seq:
                 #padd with 4
-                rawreads=rawread_data[prefix]['raw_data'][file][start:end]
+                rawreads=rawread_data[prefix]['raw_data'][start:end]
                 rawreads=np.pad(rawreads,((0,self.max_seq-(end-start)),(0,0)),mode='constant',constant_values=255)
 
 
-            sequence=[self.tokens[nt] for nt in sequences[idx].replace('T','U')]
+            sequence=hdf5_data['sequences'][0,idx].decode("utf-8")
+
+            sequence=[self.tokens[nt] for nt in sequence]
             sequence=np.array(sequence)
 
             seq_length=len(sequence)
 
             #expand sequence to max_Seq
-            expanded_sequence=np.stack([sequence for _ in range(self.max_seq)],0)
+            #expanded_sequence=np.stack([sequence for _ in range(self.max_seq)],0)
 
             #fill dots with expanded sequence
             #rawreads[rawreads==5]=expanded_sequence[rawreads==5]
@@ -190,7 +193,7 @@ class RawReadRNADataset(Dataset):
 
             
             if (end-start)>1:
-                outer_product=compute_outer_product(torch.tensor(rawread_data[prefix]['raw_data'][file][start:end]),torch.tensor(sequence))
+                outer_product=compute_outer_product(torch.tensor(rawread_data[prefix]['raw_data'][start:end]),torch.tensor(sequence))
                 #outer_product=compute_outer_product(torch.tensor(rawreads),torch.tensor(sequence))
                 outer_product=outer_product[:,:,3]-outer_product[:,:,1]*outer_product[:,:,2]
                 outer_product=set_near_diagonal_to_nan(outer_product)
