@@ -282,7 +282,10 @@ def get_pl_train(pl_train, seq_length=457):
 def load_config_from_yaml(file_path):
     with open(file_path, 'r') as file:
         config = yaml.safe_load(file)
-    return Config(**config)
+
+    config=Config(**config)
+    config.nexperiments=len(config.hdf_files)
+    return config
 
 def write_config_to_yaml(config, file_path):
     with open(file_path, 'w') as file:

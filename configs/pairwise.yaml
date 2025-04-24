@@ -13,7 +13,7 @@ decoder_ninp: 256
 decoder_nhead: 8
 decoder_nlayers: 3
 nclass: 8
-nexperiments: 5
+#nexperiments: 5
 ntoken: 6 #AUGC + padding/N token
 nhead: 12
 #use_bpp: False
@@ -44,7 +44,27 @@ r_norm_loss_weight: 1
 # Other configurations
 fold: 0
 nfolds: 6
-input_dir: "../../input/"
+input_dir: "/lustre/fs0/scratch/shared/Ribonanza2/"
 gpu_id: "0"
 previous_checkpoint: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
 #previous_checkpoint: "none"
+
+# data files
+hdf_files:
+  - Ribonanza2A_Genscript.v0.1.0.hdf5
+  - Ribonanza2B_full40B.v0.1.0.hdf5
+  - Ribonanza2C_full40B.v0.1.0.hdf5
+  - Ribonanza2D.v0.1.0.hdf5
+  - Ribonanza2E.v0.1.0.hdf5
+
+raw_read_files:
+  - - "A/RTB008_GenScript_DMS.memmap"
+    - "A/RTB010_GenScript_2A3.memmap"
+  - - "B/RTB004_Marathon_DMS.memmap"
+    - "B/RTB006_SSII_2A3.memmap"
+  - - "C/RTB000_Marathon_DMS.memmap"
+    - "C/RTB002_SSII_2A3.memmap"
+  - - "D/RTB000_Marathon_DMS.memmap"
+    - "D/RTB002_SSII_2A3.memmap"
+  - - "E/RTB000_Marathon_DMS.memmap"
+    - "E/RTB002_SSII_2A3.memmap"

@@ -94,19 +94,32 @@ def load_rawread(hdf5_data,folder="../../Ribonanza2A_RawReads/tmp_merge_align/")
 
 def get_rawread_data(config):
 
-    input_dir='../../input/'
-    config = load_config_from_yaml("configs/pairwise.yaml")
-    hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
-               'Ribonanza2B_full40B.v0.1.0.hdf5',
-               'Ribonanza2C_full40B.v0.1.0.hdf5',
-               'Ribonanza2D.v0.1.0.hdf5',
-               'Ribonanza2E.v0.1.0.hdf5']
+    input_dir=config.input_dir
+    #config = load_config_from_yaml("configs/pairwise.yaml")
+    # hdf_files=["Ribonanza2A_Genscript.v0.1.0.hdf5",
+    #            'Ribonanza2B_full40B.v0.1.0.hdf5',
+    #            'Ribonanza2C_full40B.v0.1.0.hdf5',
+    #            'Ribonanza2D.v0.1.0.hdf5',
+    #            'Ribonanza2E.v0.1.0.hdf5']
+    hdf_files=config.hdf_files
 
-    raw_read_files=[["../../Ribonanza2A_RawReads/RTB008_GenScript_DMS.memmap","../../Ribonanza2A_RawReads/RTB010_GenScript_2A3.memmap"],
-                      ["../../Ribonanza2B_RawReads/RTB004_Marathon_DMS.memmap","../../Ribonanza2B_RawReads/RTB006_SSII_2A3.memmap"],
-                      ["../../Ribonanza2C_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2C_RawReads/RTB002_SSII_2A3.memmap"],
-                      ["../../Ribonanza2D_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2D_RawReads/RTB002_SSII_2A3.memmap"],
-                      ["../../Ribonanza2E_RawReads/RTB000_Marathon_DMS.memmap","../../Ribonanza2E_RawReads/RTB002_SSII_2A3.memmap"]] 
+
+    # raw_read_files=[[f"{input_dir}/A/RTB008_GenScript_DMS.memmap",f"{input_dir}/A/RTB010_GenScript_2A3.memmap"],
+    #                   [f"{input_dir}/B/RTB004_Marathon_DMS.memmap",f"{input_dir}/B/RTB006_SSII_2A3.memmap"],
+    #                   [f"{input_dir}/C/RTB000_Marathon_DMS.memmap",f"{input_dir}/C/RTB002_SSII_2A3.memmap"],
+    #                   [f"{input_dir}/D/RTB000_Marathon_DMS.memmap",f"{input_dir}/D/RTB002_SSII_2A3.memmap"],
+    #                   [f"{input_dir}/E/RTB000_Marathon_DMS.memmap",f"{input_dir}/E/RTB002_SSII_2A3.memmap"]] 
+    raw_read_files=config.raw_read_files
+
+    for i in range(len((raw_read_files))):
+        for j in range(len((raw_read_files[i]))):
+            #file=f"{input_dir}/{file}"
+            raw_read_files[i][j]=f"{input_dir}/{raw_read_files[i][j]}"
+
+
+    # print(hdf_files)
+    # print(raw_read_files)
+    # exit()
 
     snr_cutoff=1.0
 
@@ -150,7 +163,7 @@ def get_rawread_data(config):
             dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1)&((snr>1.).sum(1)!=2))[0]
 
             #dataset names
-            sublib_data=pl.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
+            sublib_data=pl.read_csv(f'{config.input_dir}/sublib_id.csv')['sublibrary'].to_list()
 
             #StratifiedKFold on dataset
             kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
