@@ -62,8 +62,13 @@ all_data, train_indices, val_indices = get_rawread_data(config)
 print(f"train shape: {len(train_indices)}")
 print(f"val shape: {len(val_indices)}")
 
+if config.use_data_percentage<1:
+    train_indices = train_indices[:int(len(train_indices)*config.use_data_percentage)]
+    val_indices = val_indices[:int(len(val_indices)*config.use_data_percentage)]
 
-
+    print(f"using {config.use_data_percentage} of data")
+    print(f"train shape: {len(train_indices)}")
+    print(f"val shape: {len(val_indices)}")
 #pl_train=pl.read_parquet()
 seq_length=256
 
