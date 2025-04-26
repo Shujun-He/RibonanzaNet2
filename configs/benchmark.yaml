@@ -46,8 +46,8 @@ fold: 0
 nfolds: 6
 input_dir: "/lustre/fs0/scratch/shared/Ribonanza2/"
 gpu_id: "0"
-previous_checkpoint: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
-#previous_checkpoint: "none"
+#previous_checkpoint: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
+previous_checkpoint: "none"
 
 # data files
 hdf_files:
