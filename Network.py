@@ -288,21 +288,13 @@ class ConvTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
 
         #pair track ops
-        #pairwise_features=pairwise_features+self.outer_product_mean(src)
-        if self.training:
-            pairwise_features=pairwise_features+checkpoint.checkpoint(self.outer_product_mean, src, use_reentrant=False)
-        else:
-            pairwise_features=pairwise_features+self.outer_product_mean(src)
+        pairwise_features=pairwise_features+self.outer_product_mean(src)
         pairwise_features=pairwise_features+self.pair_dropout_out(self.triangle_update_out(pairwise_features,src_mask))
         pairwise_features=pairwise_features+self.pair_dropout_in(self.triangle_update_in(pairwise_features,src_mask))
         if self.use_triangular_attention:
             pairwise_features=pairwise_features+self.pair_attention_dropout_out(self.triangle_attention_out(pairwise_features,src_mask))
             pairwise_features=pairwise_features+self.pair_attention_dropout_in(self.triangle_attention_in(pairwise_features,src_mask))
-        #pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
-        if self.training:
-            pairwise_features=pairwise_features+checkpoint.checkpoint(self.pair_transition, pairwise_features, use_reentrant=False)
-        else:
-            pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
+        pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
         if return_aw:
             return src,pairwise_features,attention_weights
         else:
@@ -406,11 +398,14 @@ class TriangleMultiplicativeModule(nn.Module):
         self.to_out_norm = nn.LayerNorm(hidden_dim)
         self.to_out = nn.Linear(hidden_dim, dim)
 
-    def get_left_right(self, args):
-        x, src_mask = args
-
+    def forward(self, x, src_mask = None):
         src_mask=src_mask.unsqueeze(-1).float()
         mask = torch.matmul(src_mask,src_mask.permute(0,2,1))
+
+        # print(mask.shape)
+        # plt.imshow(mask[0].detach().cpu())
+        # plt.savefig('mask.png')
+        # exit()
 
         assert x.shape[1] == x.shape[2], 'feature map must be symmetrical'
         if exists(mask):
@@ -432,31 +427,10 @@ class TriangleMultiplicativeModule(nn.Module):
         left = left * left_gate
         right = right * right_gate
 
-        return left, right, out_gate
-
-    def output_gate(self, args):
-        out, out_gate = args
+        out = einsum(self.mix_einsum_eq, left, right)
 
         out = self.to_out_norm(out)
         out = out * out_gate
-
-        return out
-
-    def forward(self, x, src_mask = None):
-        
-        if self.training:
-            left, right, out_gate = checkpoint.checkpoint(self.get_left_right, [x, src_mask], use_reentrant=False)
-        else:
-            left, right, out_gate = self.get_left_right([x, src_mask])
-
-        out = einsum(self.mix_einsum_eq, left, right)
-
-        if self.training:
-            out = checkpoint.checkpoint(self.output_gate, [out, out_gate], use_reentrant=False)
-        else:
-            out = self.output_gate([out, out_gate])
-
-
         return self.to_out(out)
 
 
@@ -516,20 +490,13 @@ class RibonanzaNet(nn.Module):
         # outer_product = torch.einsum('bid,bjc -> bijcd', src, src)
         # outer_product = rearrange(outer_product, 'b i j c d -> b i j (c d)')
         # print(outer_product.shape)
-        #pairwise_features=self.outer_product_mean(src)
-        if self.training:
-            pairwise_features=checkpoint.checkpoint(self.custom(self.outer_product_mean), src, use_reentrant=False)
-        else:
-            pairwise_features=self.outer_product_mean(src)
-            
+        pairwise_features=self.outer_product_mean(src)
         pairwise_features=pairwise_features+self.pos_encoder(src)
-
+        # print(pairwise_features.shape)
+        # exit()
 
         attention_weights=[]
         for i,layer in enumerate(self.transformer_encoder):
-            # src,pairwise_features=checkpoint.checkpoint(self.custom(layer), 
-            # [src, pairwise_features, src_mask, return_aw],
-            # use_reentrant=False)
             src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
 
         output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0

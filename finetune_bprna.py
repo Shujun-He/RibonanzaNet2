@@ -13,7 +13,18 @@ import random
 import argparse
 import yaml
 import os
+from sklearn.metrics import f1_score
+import os
+from accelerate import Accelerator
 
+# Set the environment variable
+os.environ['ARNIEFILE'] = '../arnie_file.txt'
+
+# To check if the variable was set correctly, you can print it
+print(os.environ['ARNIEFILE'])
+
+from arnie.pk_predictors import _hungarian
+from arnie.utils import convert_dotbracket_to_bp_list
 
 os.system('mkdir grid_search_scores')
 
@@ -42,14 +53,12 @@ data['publication_date']=[pd.Timestamp(s) for s in data['publication_date']]
 data.shape
 
 
-# In[3]:
+bp_rna_data=pd.read_csv("../../bpRNA/compiled.csv")
+bp_rna_data['len']=bp_rna_data['sequence'].apply(lambda x: len(x))
+bp_rna_data=bp_rna_data.loc[bp_rna_data['len']<1024].reset_index(drop=True)
+#bp_rna_data['pairs']=[convert_dotbracket_to_bp_list(s, allow_pseudoknots=True) for s in bp_rna_data['structure']]
 
-
-#atom1_cutoff="2021-09-30"
-
-
-# In[7]:
-
+#exit()
 
 # Define the cutoff date
 atom1_cutoff = pd.Timestamp('2020-05-01')
@@ -121,6 +130,12 @@ def get_ct(bp,s):
         ct_matrix[b[0]-1,b[1]-1]=1
     return ct_matrix
 
+def get_ct2(bp,s):
+    ct_matrix=np.zeros((len(s),len(s)))
+    for b in bp:
+        ct_matrix[b[0],b[1]]=ct_matrix[b[1],b[0]]=1
+    return ct_matrix
+
 class RNA2D_Dataset(Dataset):
     def __init__(self,data):
         self.data=data
@@ -152,18 +167,57 @@ class RNA2D_Dataset(Dataset):
                 'ct':ct,}
                 #'msa':msa}
 
+from collections import defaultdict
+
+class bpRNA2D_Dataset(Dataset):
+    def __init__(self,data):
+        self.data=data
+        self.tokens=defaultdict(lambda: 4)
+        
+        for i,nt in enumerate('ACGUN'):
+            self.tokens[nt]=i
+        #self.msa_data=pickle.load(open('../trrosetta_msa_data.p','rb'))
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        sequence=self.data.loc[idx,'sequence'].upper()
+        sequence=[self.tokens[nt] for nt in sequence]
+        sequence=np.array(sequence)
+        sequence=torch.tensor(sequence)
+
+
+        dbn=self.data.loc[idx,'structure']
+        pairs=convert_dotbracket_to_bp_list(dbn, allow_pseudoknots=True)
+        #print(pairs)
+        ct=get_ct2(pairs,sequence)
+
+        ct=torch.tensor(ct)
+
+        
+
+        return {'sequence':sequence,
+                'ct':ct,}
+                #'msa':msa}
+
+
+
 
 # In[23]:
 
-
+bp_dataset=bpRNA2D_Dataset(bp_rna_data)
 train_dataset=RNA2D_Dataset(train_split)
 val_dataset=RNA2D_Dataset(val_split)
 test_dataset=RNA2D_Dataset(test_data)
 
+# plt.imshow(bp_dataset[0]['ct'].numpy(),cmap='gray')
+# plt.savefig('bpRNA_example.png')
+# exit()
 
 # In[13]:
 
-
+bp_loader=DataLoader(bp_dataset,batch_size=1,shuffle=True)
 train_loader=DataLoader(train_dataset,batch_size=1,shuffle=True)
 val_loader=DataLoader(val_dataset,batch_size=1,shuffle=False)
 
@@ -197,7 +251,7 @@ print(f"best_weights_path: {best_weights_path}")
 
 class finetuned_RibonanzaNet(RibonanzaNet):
     def __init__(self, config, pretrained=False):
-        config.dropout=0.1
+        config.dropout=0.2
         config.use_grad_checkpoint=True
         super(finetuned_RibonanzaNet, self).__init__(config)
         if pretrained:
@@ -240,17 +294,7 @@ class finetuned_RibonanzaNet(RibonanzaNet):
 # In[15]:
 
 
-from sklearn.metrics import f1_score
-import os
 
-# Set the environment variable
-os.environ['ARNIEFILE'] = '../arnie_file.txt'
-
-# To check if the variable was set correctly, you can print it
-print(os.environ['ARNIEFILE'])
-
-from arnie.pk_predictors import _hungarian
-from arnie.utils import convert_dotbracket_to_bp_list
 
 def mask_diagonal(matrix, mask_value=0):
     matrix=matrix.copy()
@@ -317,26 +361,39 @@ criterion = torch.nn.BCEWithLogitsLoss(reduction=finetune_config["criterion_redu
 
 schedule = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer, 
-    T_max=epochs * len(train_loader) * 0.25 // batch_size
+    T_max= (epochs - 2) * len(train_loader) // batch_size
 )
 
-cos_steps = epochs * len(train_loader) * 0.75
+cos_epoch = epochs - 3 
 
+from accelerate import Accelerator
+from accelerate import DistributedDataParallelKwargs 
+
+ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+accelerator = Accelerator(kwargs_handlers=[ddp_kwargs],mixed_precision='bf16')
+
+model, optimizer, train_loader, val_loader, bp_loader, schedule = \
+accelerator.prepare(model, optimizer, train_loader, val_loader, bp_loader, schedule)
 
 best_f1 = 0
 total_steps = 0
+best_val_loss = 999999
 for epoch in range(epochs):
     model.train()
-    tbar = tqdm(train_loader)
+    
     total_loss = 0
     oom = 0
-
+    if epoch <= cos_epoch: #train with bprna for one epoch
+        tbar = tqdm(bp_loader)
+    else:
+        tbar = tqdm(train_loader)
     for idx, batch in enumerate(tbar):
         total_steps+=1
-        try:
-            sequence = batch['sequence'].cuda()
-            labels = batch['ct'].cuda()
+        #try:
+        sequence = batch['sequence']#.cuda()
+        labels = batch['ct']#.cuda()
 
+        with accelerator.autocast():
             output = model(sequence)
 
             # Apply loss and weighting
@@ -344,25 +401,29 @@ for epoch in range(epochs):
             loss[labels == 1] = loss[labels == 1] * upweight_positive
             loss = loss.mean() * sequence.shape[1] ** loss_power_scale / normalize_length
 
-            # Backward pass
-            (loss / batch_size).backward()
+        # Backward pass
+        (loss / batch_size).backward()
 
-            if (idx + 1) % batch_size == 0 or idx + 1 == len(tbar):
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), 
-                    finetune_config["gradient_clip"]
-                )
-                optimizer.step()
-                optimizer.zero_grad()
+        if (idx + 1) % batch_size == 0 or idx + 1 == len(tbar):
+            # torch.nn.utils.clip_grad_norm_(
+            #     model.parameters(), 
+            #     finetune_config["gradient_clip"]
+            # )
+            # optimizer.step()
+            # optimizer.zero_grad()
+            accelerator.clip_grad_norm_(model.parameters(), finetune_config["gradient_clip"])
+            optimizer.step()
+            #optimizer_step()
+            optimizer.zero_grad()
 
-                if total_steps > cos_steps:
-                    schedule.step()
+            if epoch > cos_epoch:
+                schedule.step()
 
-            total_loss += loss.item()
-            tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss / (idx + 1)} OOMs: {oom}")
-            #break
-        except Exception:
-            oom += 1
+        total_loss += loss.item()
+        tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss / (idx + 1)} OOMs: {oom}")
+        #break
+        # except Exception:
+        #     oom += 1
 
     # Validation loop
     tbar = tqdm(val_loader)
@@ -379,26 +440,24 @@ for epoch in range(epochs):
             loss = criterion(output, labels)
             loss = loss.mean()
 
-        val_loss += loss.item()
-        val_preds.append([labels.cpu().numpy(), output.sigmoid().cpu().numpy()])
-        
+        #val_loss += loss.item()
+
+        val_loss += accelerator.gather(loss).mean().item()
+
+        #val_preds.append([labels.cpu().numpy(), output.sigmoid().cpu().numpy()])
+    
+    val_loss=val_loss / len(val_loader)
     print(f"Validation loss: {val_loss}")
 
-    f1, th = tune_val_f1(val_preds)
 
-    if f1 > best_f1:
-        best_f1 = f1
-        best_theta = th
-        best_preds = val_preds
-        #torch.save(model.state_dict(), finetune_config["checkpoint_path"])
+
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
         best_state_dict=model.state_dict().copy()
+        torch.save(best_state_dict, f"bp_RNA_best_model.pth")
 
-        prefix=args.config.split('/')[-1]
-        with open(f"grid_search_scores/{prefix}.txt",'w+') as f:
-            f.write(str(best_f1))
 
-    #break
-# In[17]:
+best_theta = 0.5
 
 
 model.load_state_dict(best_state_dict)
@@ -555,7 +614,7 @@ test_data['RibonanzaNet_Hungarian_F1']=F1s
 test_data['RibonanzaNet_Hungarian_CP_F1']=crossed_pair_F1s
 
 os.system('mkdir test_results')
-test_data.to_parquet(f"test_results/{prefix}_finetuned_test.parquet",index=False)
+test_data.to_parquet(f"bpRNA_finetuned_test.parquet",index=False)
 
 
 # In[22]:
@@ -670,7 +729,7 @@ casp_data['RibonanzaNet_Hungarian_CP_F1']=crossed_pair_F1s
 # In[ ]:
 
 
-casp_data.to_csv(f"test_results/{prefix}_casp15_ribonanzanet.csv",index=False)
+casp_data.to_csv(f"bpRNA_casp15_ribonanzanet.csv",index=False)
 
 
 
@@ -757,4 +816,4 @@ casp16_targets['RibonanzaNet_Hungarian_CP_F1']=crossed_pair_F1s
 # In[ ]:
 
 
-casp16_targets.to_csv(f"test_results/{prefix}_casp16_ribonanzanet.csv",index=False)
+casp16_targets.to_csv(f"bpRNA_casp16_ribonanzanet.csv",index=False)

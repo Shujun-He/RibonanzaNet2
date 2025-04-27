@@ -8,6 +8,81 @@ import torch
 from torch.optim.lr_scheduler import _LRScheduler
 import matplotlib.pyplot as plt
 from collections import Counter
+import pandas as pd
+from sklearn.model_selection import KFold, StratifiedKFold
+import h5py
+
+
+
+def load_and_split_rn2_ABCD():
+
+    nfolds=6
+    fold=0
+
+    #first index is hdf file, and second is index in that hdf file
+    hdf_files=[]
+    hdf_train_indices=[]
+    hdf_val_indices=[]
+
+
+    #first get A and split into train val
+    data=h5py.File('../../input/Ribonanza2A_Genscript.v0.1.0.hdf5', 'r')
+
+    #get high snr data indices
+    snr=data['signal_to_noise'][:]
+    high_quality_indices = np.where((snr>1.).sum(1)==2)[0]
+    dirty_data_indices = np.where(((snr>0.5).sum(1)>=1))[0]
+
+    #dataset names
+    sublib_data=pd.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
+
+    #StratifiedKFold on dataset
+    kfold=StratifiedKFold(n_splits=nfolds,shuffle=True, random_state=0)
+    fold_indices={}
+    high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
+    for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
+        fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
+    #exit()
+
+    train_indices=fold_indices[fold][0]
+    val_indices=fold_indices[fold][1]
+
+    train_indices=np.concatenate([train_indices,dirty_data_indices])
+
+    print("train indices",len(train_indices))
+    print("val indices",len(val_indices))
+
+    hdf_files.append(data)
+    hdf_train_indices.extend([(0,i) for i in train_indices])
+    hdf_val_indices.extend([(0,i) for i in val_indices])
+
+    #loop through BCD and use all for train
+    BCD=['Ribonanza2B_full40B.v0.1.0.hdf5','Ribonanza2C_full40B.v0.1.0.hdf5','Ribonanza2D.v0.1.0.hdf5','Ribonanza2E.v0.1.0.hdf5']
+
+    for file_index,hdf_file in zip(range(1,5),BCD):
+        print("loading",
+            hdf_file)
+        print("file index",file_index)
+        
+        data=h5py.File('../../input/'+hdf_file, 'r')
+
+        #get high snr data indices take any taht has one profile at snr>=1
+        snr=data['signal_to_noise'][:]
+        print(len(snr))
+        train_indices = np.where((snr>0.5).sum(1)>=1)[0]
+        
+        print("train indices",len(train_indices))
+
+
+        hdf_files.append(data)
+        hdf_train_indices.extend([(file_index,i) for i in train_indices])
+
+
+    print("total number of train indices",len(hdf_train_indices))
+    print("total number of val indices",len(hdf_val_indices))
+
+    return hdf_files,hdf_train_indices,hdf_val_indices
+
 def plot_and_save_bar_chart(dataset_name, save_path):
     """
     Generates a bar chart for the counts of unique elements in dataset_name and saves the plot.
@@ -210,6 +285,54 @@ class CSVLogger:
             string+="\n"
             f.write(string)
         return self
+
+def load_state_dict_ignore_shape(model, pretrained_path):
+    """
+    Loads the state dictionary from the given path into the model,
+    ignoring keys with mismatched weight shapes.
+    
+    Args:
+        model (torch.nn.Module): The model to load the weights into.
+        pretrained_path (str): The path to the saved state dictionary.
+        
+    Returns:
+        None
+    """
+    # Get the current state dict from the model
+    model_dict = model.state_dict()
+    
+    # Load the pretrained state dict
+    pretrained_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
+    
+    # Filter the pretrained state dict to only include keys that exist in the model
+    # and have matching shapes
+    filtered_dict = {}
+    for key, value in pretrained_dict.items():
+        if key in model_dict:
+            if model_dict[key].shape == value.shape:
+                filtered_dict[key] = value
+            else:
+                print(f"Skipping key '{key}' due to shape mismatch: "
+                      f"model shape {model_dict[key].shape} vs. pretrained shape {value.shape}")
+        else:
+            print(f"Skipping key '{key}' as it is not found in the current model.")
+    
+    # Update the model's state dict with the filtered dictionary and load it
+    model_dict.update(filtered_dict)
+    model.load_state_dict(model_dict)
+    print("Model state dict loaded with matching parameters.")
+
+def print_learning_rates(optimizer):
+    """
+    Prints the learning rate for each parameter group in the given optimizer.
+    
+    Args:
+        optimizer (torch.optim.Optimizer): The optimizer to inspect.
+    """
+    for i, param_group in enumerate(optimizer.param_groups):
+        lr = param_group.get('lr', None)
+        print(f"Learning rate for parameter group {i}: {lr}")
+
 
 if __name__=='__main__':
     print(load_config_from_yaml("configs/pairwise.yaml"))
