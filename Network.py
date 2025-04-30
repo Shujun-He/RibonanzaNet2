@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 import torch.utils.checkpoint as checkpoint
+from utils import *
+
 
 from dropout import *
 
@@ -473,7 +475,7 @@ class RibonanzaNet(nn.Module):
 
         self.outer_product_mean=Outer_Product_Mean(in_dim=config.ninp,dim_msa=config.dim_msa,pairwise_dim=config.pairwise_dimension)
         self.pos_encoder=relpos(config.pairwise_dimension)
-        self.use_gradient_checkpoint=False
+        self.use_gradient_checkpoint=True
 
     def custom(self, module):
         def custom_forward(*inputs):
@@ -518,7 +520,7 @@ class RibonanzaNet(nn.Module):
         # print(outer_product.shape)
         if self.use_gradient_checkpoint:
             #print("using grad checkpointing")
-            pairwise_features=checkpoint.checkpoint(self.custom(self.outer_product_mean), src)
+            pairwise_features=checkpoint.checkpoint(self.custom(self.outer_product_mean), src, use_reentrant=False)
             pairwise_features=pairwise_features+self.pos_encoder(src)
         else:
             pairwise_features=self.outer_product_mean(src)
@@ -612,6 +614,238 @@ class TriangleAttention(nn.Module):
         return z_
 
 
+def random_vector(length):
+    """
+    Generate a random 3D vector of a given length.
+    
+    Parameters:
+        length (float): Desired magnitude of the vector.
+        
+    Returns:
+        np.ndarray: 3D vector with specified length.
+    """
+    vec = np.random.randn(3)  # Gaussian random vector
+    vec /= np.linalg.norm(vec)  # Normalize to unit length
+    return vec * length  # Scale to desired length
+
+class SinusoidalPosEmb(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        device = x.device
+        half_dim = self.dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        emb = x[:, None] * emb[None, :]
+        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+        return emb
+
+class finetuned_RibonanzaNet(RibonanzaNet):
+    def __init__(self, config, pretrained=False):
+        config.dropout=0.1
+        config.use_grad_checkpoint=True
+        super(finetuned_RibonanzaNet, self).__init__(config)
+        if pretrained:
+            self.load_state_dict(torch.load("../../8m_exps/test32/models/epoch_0/pytorch_model_fsdp.bin",map_location='cpu'))
+        # self.ct_predictor=nn.Sequential(nn.Linear(64,256),
+        #                                 nn.ReLU(),
+        #                                 nn.Linear(256,64),
+        #                                 nn.ReLU(),
+        #                                 nn.Linear(64,1)) 
+        self.dropout=nn.Dropout(0.0)
+
+        decoder_dim=768
+        self.structure_module=[SimpleStructureModule(d_model=decoder_dim, nhead=12, 
+                 dim_feedforward=decoder_dim*4, pairwise_dimension=config.pairwise_dimension, dropout=0.0) for i in range(6)]
+        self.structure_module=nn.ModuleList(self.structure_module)
+
+        self.xyz_embedder=nn.Linear(3,decoder_dim)
+        self.xyz_norm=nn.LayerNorm(decoder_dim)
+        self.xyz_predictor=nn.Linear(decoder_dim,3)
+        
+        self.adaptor=nn.Sequential(nn.Linear(config.ninp,decoder_dim),nn.LayerNorm(decoder_dim))
+
+        self.distogram_predictor=nn.Sequential(nn.LayerNorm(config.pairwise_dimension),
+                                                nn.Linear(config.pairwise_dimension,40))
+
+        self.time_embedder=SinusoidalPosEmb(decoder_dim)
+
+        self.time_mlp=nn.Sequential(nn.Linear(decoder_dim,decoder_dim),
+                                    nn.ReLU(),  
+                                    nn.Linear(decoder_dim,decoder_dim))
+        self.time_norm=nn.LayerNorm(decoder_dim)
+
+        self.distance2pairwise=nn.Linear(1,config.pairwise_dimension,bias=False)
+
+        self.pair_mlp=nn.Sequential(nn.Linear(config.pairwise_dimension,config.pairwise_dimension),
+                                    nn.ReLU(),
+                                    nn.Linear(config.pairwise_dimension,config.pairwise_dimension))
+
+
+    def custom(self, module):
+        def custom_forward(*inputs):
+            inputs = module(*inputs)
+            return inputs
+        return custom_forward
+    
+    def embed_pair_distance(self,inputs):
+        pairwise_features,xyz=inputs
+        distance_matrix=xyz[:,None,:,:]-xyz[:,:,None,:]
+        distance_matrix=(distance_matrix**2).sum(-1).clip(2,37**2).sqrt()
+        distance_matrix=distance_matrix[:,:,:,None]
+        pairwise_features=pairwise_features+self.distance2pairwise(distance_matrix)
+
+        return pairwise_features
+
+    def forward(self,src,xyz,t):
+        
+        #with torch.no_grad():
+        sequence_features, pairwise_features=self.get_embeddings(src, torch.ones_like(src).long().to(src.device))
+        
+        distogram=self.distogram_predictor(pairwise_features)
+
+        sequence_features=self.adaptor(sequence_features)
+
+        decoder_batch_size=xyz.shape[0]
+        sequence_features=sequence_features.repeat(decoder_batch_size,1,1)
+        
+
+        pairwise_features=pairwise_features.expand(decoder_batch_size,-1,-1,-1)
+
+        pairwise_features= checkpoint.checkpoint(self.custom(self.embed_pair_distance), [pairwise_features,xyz],use_reentrant=False)
+
+        time_embed=self.time_embedder(t).unsqueeze(1)
+        tgt=self.xyz_norm(sequence_features+self.xyz_embedder(xyz)+time_embed)
+
+        tgt=self.time_norm(tgt+self.time_mlp(tgt))
+
+        for layer in self.structure_module:
+            #tgt=layer([tgt, sequence_features,pairwise_features,xyz,None])
+            tgt=checkpoint.checkpoint(self.custom(layer),
+            [tgt, sequence_features,pairwise_features,xyz,None],
+            use_reentrant=False)
+            # xyz=xyz+self.xyz_predictor(sequence_features).squeeze(0)
+            # xyzs.append(xyz)
+            #print(sequence_features.shape)
+        
+        xyz=self.xyz_predictor(tgt).squeeze(0)
+        #.squeeze(0)
+
+        return xyz, distogram
+    
+
+    def denoise(self,sequence_features,pairwise_features,xyz,t):
+        decoder_batch_size=xyz.shape[0]
+        sequence_features=sequence_features.expand(decoder_batch_size,-1,-1)
+        pairwise_features=pairwise_features.expand(decoder_batch_size,-1,-1,-1)
+
+        pairwise_features=self.embed_pair_distance([pairwise_features,xyz])
+
+        sequence_features=self.adaptor(sequence_features)
+        time_embed=self.time_embedder(t).unsqueeze(1)
+        tgt=self.xyz_norm(sequence_features+self.xyz_embedder(xyz)+time_embed)
+        tgt=self.time_norm(tgt+self.time_mlp(tgt))
+        #xyz_batch_size=xyz.shape[0]
+        
+
+
+        for layer in self.structure_module:
+            tgt=layer([tgt, sequence_features,pairwise_features,xyz,None])
+            # xyz=xyz+self.xyz_predictor(sequence_features).squeeze(0)
+            # xyzs.append(xyz)
+            #print(sequence_features.shape)
+        xyz=self.xyz_predictor(tgt).squeeze(0)
+        # print(xyz.shape)
+        # exit()
+        return xyz
+
+
+
+def causal_mask_filled(seq_len: int, device=None):
+    # Returns a [seq_len x seq_len] float mask with -inf in masked positions, 0 elsewhere
+    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)
+    mask = mask.masked_fill(mask == 1, float('-inf')).masked_fill(mask == 0, 0.0)
+    if device:
+        mask = mask.to(device)
+    return mask
+
+def zero_init(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.zeros_(m.weight)
+        if m.bias is not None:
+            torch.nn.init.zeros_(m.bias)    
+
+class SimpleStructureModule(nn.Module):
+
+    def __init__(self, d_model, nhead, 
+                 dim_feedforward, pairwise_dimension, dropout=0.1,
+                 ):
+        super(SimpleStructureModule, self).__init__()
+        #self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = MultiHeadAttention(d_model, nhead, d_model//nhead, d_model//nhead, dropout=dropout)
+        self.attn_linear = nn.Linear(d_model, d_model)
+        #self.cross_attn = MultiHeadAttention(d_model, nhead, d_model//nhead, d_model//nhead, dropout=dropout)
+        zero_init(self.attn_linear)
+
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        zero_init(self.linear2)
+
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.pairwise2heads=nn.Linear(pairwise_dimension,nhead,bias=False)
+        self.pairwise_norm=nn.LayerNorm(pairwise_dimension)
+
+        #self.distance2heads=nn.Linear(1,nhead,bias=False)
+        #self.pairwise_norm=nn.LayerNorm(pairwise_dimension)
+
+        self.activation = nn.GELU()
+
+        
+    def custom(self, module):
+        def custom_forward(*inputs):
+            inputs = module(*inputs)
+            return inputs
+        return custom_forward
+
+    def forward(self, input):
+        tgt , src,  pairwise_features, pred_t, src_mask = input
+        
+        #src = src*src_mask.float().unsqueeze(-1)
+
+        pairwise_bias=self.pairwise2heads(self.pairwise_norm(pairwise_features)).permute(0,3,1,2)
+
+        
+
+
+        #print(pairwise_bias.shape,distance_bias.shape)
+
+        #pairwise_bias=pairwise_bias+distance_bias
+
+
+        res=tgt
+        tgt,attention_weights = self.self_attn(tgt, tgt, tgt, mask=pairwise_bias, src_mask=src_mask)
+        tgt=self.attn_linear(tgt)
+        tgt = res + self.dropout1(tgt)
+        tgt = self.norm1(tgt)
+
+        # print(tgt.shape,src.shape)
+        # exit()
+
+        res=tgt
+        tgt = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        tgt = res + self.dropout2(tgt)
+        tgt = self.norm2(tgt)
+
+
+        return tgt
 
 if __name__ == "__main__":
     from Functions import *

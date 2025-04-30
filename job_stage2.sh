@@ -8,5 +8,3 @@
 
 python eval_casp15.py
 python eval_casp16.py
-
-#python eval_casp15_stage2.py

@@ -27,22 +27,22 @@ def generate_accelerate_config(node_rank: int, n_nodes: int, n_gpus_per_node: in
     config = {
         'compute_environment': 'LOCAL_MACHINE',
         'debug': False,
-        'distributed_type': 'FSDP',
+        'distributed_type': 'MULTI_GPU',
         'downcast_bf16': 'no',
         'enable_cpu_affinity': False,
-        'fsdp_config': {
-            'fsdp_activation_checkpointing': False,
-            'fsdp_auto_wrap_policy': 'SIZE_BASED_WRAP',
-            'fsdp_backward_prefetch': 'NO_PREFETCH',
-            'fsdp_cpu_ram_efficient_loading': False,
-            'fsdp_forward_prefetch': False,
-            'fsdp_min_num_params': 1000000,
-            'fsdp_offload_params': False,
-            'fsdp_sharding_strategy': 'SHARD_GRAD_OP',
-            'fsdp_state_dict_type': 'FULL_STATE_DICT',
-            'fsdp_sync_module_states': False,
-            'fsdp_use_orig_params': True
-        },
+        # 'fsdp_config': {
+        #     'fsdp_activation_checkpointing': False,
+        #     'fsdp_auto_wrap_policy': 'SIZE_BASED_WRAP',
+        #     'fsdp_backward_prefetch': 'NO_PREFETCH',
+        #     'fsdp_cpu_ram_efficient_loading': False,
+        #     'fsdp_forward_prefetch': False,
+        #     'fsdp_min_num_params': 1000000,
+        #     'fsdp_offload_params': False,
+        #     'fsdp_sharding_strategy': 'SHARD_GRAD_OP',
+        #     'fsdp_state_dict_type': 'FULL_STATE_DICT',
+        #     'fsdp_sync_module_states': False,
+        #     'fsdp_use_orig_params': True
+        # },
         'machine_rank': node_rank,
         'main_process_ip': main_node,
         'main_process_port': base_port + 12,
@@ -82,12 +82,8 @@ def generate_slurm_script(n_gpus: int, config_file: str,
         slurm_params.append(f"#SBATCH --nodelist={master_node}")
     
     # Add the accelerate launch command
-    command = f"\n\n{python_env_path}/bin/accelerate launch --config_file {config_file} {script_name}\n"
+    command = f"\n\n{python_env_path}/bin/accelerate launch --config_file {config_file} {script_name}"
     
-    if master_node is not None:
-        command+="/lustre/fs0/scratch/shujun/miniconda3/envs/torch/bin/python generate_finetune_configs.py\n"
-        command+="bash launch_finetune.sh\n"
-
     return '\n'.join(slurm_params) + command
 
 def generate_all_configs(n_nodes: int = None, node_list: list = None,
