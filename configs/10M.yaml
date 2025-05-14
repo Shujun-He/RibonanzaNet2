@@ -1,32 +1,32 @@
 # Model hyperparameters
-learning_rate: 0.002 # The learning rate for the optimizer
-batch_size: 3        # Number of samples per batch
+learning_rate: 0.001 # The learning rate for the optimizer
+batch_size: 4        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
 epochs: 1            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
 weight_decay: 0.0001
 k: 5 #not used
-ninp: 384
-nlayers: 48
+ninp: 256
+nlayers: 9
 nclass: 2
 ntoken: 6 #AUGC + padding/N token
-nhead: 12
+nhead: 8
 #use_bpp: False
 use_flip_aug: false
 #bpp_file_folder: "../../input/bpp_files/"
 gradient_accumulation_steps: 1
 use_triangular_attention: false
-pairwise_dimension: 128
-dim_msa: 32
+pairwise_dimension: 64
+dim_msa: 16
 clip_grad_norm: 1
 max_len: 177
 log_interval: 2000 #save checkpoints every log_interval steps
-previous_model_path: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
+previous_model_path: "none"
 use_noise_aug: false
 
 #Data scaling
-use_data_percentage: 1
+use_data_percentage: 0.1
 use_dirty_data: true # turn off for data scaling and data dropout experiments
 
 
@@ -39,4 +39,3 @@ gpu_id: "0"
 # data files
 hdf_files:
   - /lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5
-subset_file: '../../sublib_id.csv'
