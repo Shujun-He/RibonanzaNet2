@@ -38,4 +38,5 @@ gpu_id: "0"
 
 # data files
 hdf_files:
-  - /lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5
+  - /nrs/flyem/huangg/rnaxjanelia/OneMil.v0.1.0.hdf5
+#  - /lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5

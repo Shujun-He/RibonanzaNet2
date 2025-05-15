@@ -234,8 +234,8 @@ class ConvTransformerEncoderLayer(nn.Module):
 
         #self.conv=nn.Conv1d(d_model,d_model,k,padding=k//2)
 
-        self.triangle_update_out=TriangleMultiplicativeModule(dim=pairwise_dimension,mix='outgoing')
-        self.triangle_update_in=TriangleMultiplicativeModule(dim=pairwise_dimension,mix='ingoing')
+        self.triangle_update_out=TriangleMultiplicativeModule2(dim=pairwise_dimension,mix='outgoing')
+        self.triangle_update_in=TriangleMultiplicativeModule2(dim=pairwise_dimension,mix='ingoing')
 
         self.pair_dropout_out=DropoutRowwise(dropout)
         self.pair_dropout_in=DropoutRowwise(dropout)
@@ -433,6 +433,84 @@ class TriangleMultiplicativeModule(nn.Module):
         out = out * out_gate
         return self.to_out(out)
 
+class TriangleMultiplicativeModule2(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        hidden_dim = None,
+        mix = 'ingoing'
+    ):
+        super().__init__()
+        assert mix in {'ingoing', 'outgoing'}, 'mix must be either ingoing or outgoing'
+
+        hidden_dim = default(hidden_dim, dim)
+        self.norm = nn.LayerNorm(dim)
+
+        self.left_proj = nn.Linear(dim, hidden_dim)
+        self.right_proj = nn.Linear(dim, hidden_dim)
+
+        self.left_gate = nn.Linear(dim, hidden_dim)
+        self.right_gate = nn.Linear(dim, hidden_dim)
+        self.out_gate = nn.Linear(dim, hidden_dim)
+
+        # initialize all gating to be identity
+        for gate in (self.left_gate, self.right_gate, self.out_gate):
+            nn.init.constant_(gate.weight, 0.)
+            nn.init.constant_(gate.bias, 1.)
+
+        self.mix_type = mix
+        if mix == 'outgoing':
+            self.mix_einsum_eq = '... i k d, ... j k d -> ... i j d'
+        elif mix == 'ingoing':
+            self.mix_einsum_eq = '... k i d, ... k j d -> ... i j d'
+
+        self.to_out_norm = nn.LayerNorm(hidden_dim)
+        self.to_out = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x, src_mask = None):
+        src_mask = src_mask.unsqueeze(-1).float()
+        mask = torch.matmul(src_mask, src_mask.permute(0, 2, 1))
+
+        assert x.shape[1] == x.shape[2], 'feature map must be symmetrical'
+        if exists(mask):
+            mask = rearrange(mask, 'b i j -> b i j ()')
+
+        x = self.norm(x)
+
+        left = self.left_proj(x)
+        right = self.right_proj(x)
+
+        if exists(mask):
+            left = left * mask
+            right = right * mask
+
+        left_gate = self.left_gate(x).sigmoid()
+        right_gate = self.right_gate(x).sigmoid()
+        out_gate = self.out_gate(x).sigmoid()
+
+        left = left * left_gate
+        right = right * right_gate
+        
+        batch_size, seq_len_i, seq_len_j, feature_dim = left.shape
+        
+        if self.mix_type == 'outgoing':
+            # '... i k d, ... j k d -> ... i j d'
+            left_reshaped = rearrange(left, 'b i k d -> b d i k')  # [B, d, i, k]
+            right_reshaped = rearrange(right, 'b j k d -> b d j k')  # [B, d, j, k]
+            out = torch.matmul(left_reshaped, right_reshaped.transpose(-1, -2))  # [B, d, i, j]
+            out = rearrange(out, 'b d i j -> b i j d')  # [B, i, j, d]
+    
+        elif self.mix_type == 'ingoing':
+            # '... k i d, ... k j d -> ... i j d'
+            left_reshaped = rearrange(left, 'b k i d -> b d k i')  # [B, d, k, i]
+            right_reshaped = rearrange(right, 'b k j d -> b d k j')  # [B, d, k, j]
+            out = torch.matmul(left_reshaped.transpose(-1, -2), right_reshaped)  # [B, d, i, j]
+            out = rearrange(out, 'b d i j -> b i j d')  # [B, i, j, d]
+        
+        out = self.to_out_norm(out)
+        out = out * out_gate
+        return self.to_out(out)
 
 class RibonanzaNet(nn.Module):
 
