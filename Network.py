@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 import torch.utils.checkpoint as checkpoint
+from torch.profiler import record_function
 
 from dropout import *
 
@@ -32,6 +33,7 @@ class TransitionLayer(nn.Module):
         self.linear_b = nn.Linear(input_dim, n * input_dim, bias=False)
         self.linear_out = nn.Linear(n * input_dim, input_dim, bias=False)
 
+    @record_function("ribonanza::transition_layer")
     def forward(self, x):
         # Step 1: Apply LayerNorm
         x = self.layer_norm(x)
@@ -78,6 +80,7 @@ class GeM(nn.Module):
         super(GeM,self).__init__()
         self.p = Parameter(torch.ones(1)*p)
         self.eps = eps
+    @record_function("ribonanza::gem")
     def forward(self, x):
         return gem(x, p=self.p, eps=self.eps)
     def __repr__(self):
@@ -93,6 +96,7 @@ class ScaledDotProductAttention(nn.Module):
         self.dropout = nn.Dropout(attn_dropout)
         #self.gamma=torch.tensor(32.0)
 
+    @record_function("ribonanza::scaled_dot_product_attention")
     def forward(self, q, k, v, mask=None, attn_mask=None):
 
         #print(self.gamma)
@@ -161,6 +165,7 @@ class MultiHeadAttention(nn.Module):
         # self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
 
+    @record_function("ribonanza::multi_head_attention")
     def forward(self, q, k, v, mask=None,src_mask=None):
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
@@ -266,6 +271,7 @@ class ConvTransformerEncoderLayer(nn.Module):
                                             nn.ReLU(),
                                             nn.Linear(pairwise_dimension*4,pairwise_dimension))
 
+    @record_function("ribonanza::conv_transformer_encoder_layer")
     def forward(self,input):
 
         src , pairwise_features, src_mask, return_aw= input
@@ -314,6 +320,7 @@ class PositionalEncoding(nn.Module):
         pe = pe.unsqueeze(0).transpose(0, 1)
         self.register_buffer('pe', pe)
 
+    @record_function("ribonanza::positional_encoding")
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
@@ -325,6 +332,7 @@ class Outer_Product_Mean(nn.Module):
         self.proj_down1 = nn.Linear(in_dim, dim_msa)
         self.proj_down2 = nn.Linear(dim_msa ** 2, pairwise_dim)
 
+    @record_function("ribonanza::outer_product_mean")
     def forward(self,seq_rep, pair_rep=None):
         seq_rep=self.proj_down1(seq_rep)
         outer_product = torch.einsum('bid,bjc -> bijcd', seq_rep, seq_rep)
@@ -342,6 +350,7 @@ class relpos(nn.Module):
         super(relpos, self).__init__()
         self.linear = nn.Linear(33, dim)
 
+    @record_function("ribonanza::relpos")
     def forward(self, src):
         L=src.shape[1]
         res_id = torch.arange(L).to(src.device).unsqueeze(0)
@@ -398,6 +407,7 @@ class TriangleMultiplicativeModule(nn.Module):
         self.to_out_norm = nn.LayerNorm(hidden_dim)
         self.to_out = nn.Linear(hidden_dim, dim)
 
+    @record_function("ribonanza::triangle_multiplicative_module")
     def forward(self, x, src_mask = None):
         src_mask=src_mask.unsqueeze(-1).float()
         mask = torch.matmul(src_mask,src_mask.permute(0,2,1))
@@ -557,6 +567,7 @@ class TriangleAttention(nn.Module):
         # self.to_out.weight.data.fill_(0.)
         # self.to_out.bias.data.fill_(0.)
 
+    @record_function("ribonanza::triangle_attention")
     def forward(self, z, src_mask):
         """
         how to do masking
