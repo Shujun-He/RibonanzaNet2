@@ -2,6 +2,8 @@
 
 Training code for RibonanzaNet. 
 
+Profile a small test example with `python run_profile.py --config_path configs/10M.yaml`.
+
 # Example notebooks
 
 You may not want to retrain RibonanzaNet from scratch and rather just use pretrained checkpoints, so we have created example notebooks: \

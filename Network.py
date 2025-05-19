@@ -279,32 +279,36 @@ class ConvTransformerEncoderLayer(nn.Module):
         # return_aw=False
         use_gradient_checkpoint=False
 
-        pairwise_bias=self.pairwise2heads(self.pairwise_norm(pairwise_features)).permute(0,3,1,2)
+        with record_function("ribonanza::tel::pairwise2heads"):
+            pairwise_bias=self.pairwise2heads(self.pairwise_norm(pairwise_features)).permute(0,3,1,2)
 
         #self attention
-        res=src
-        src,attention_weights = self.self_attn(src, src, src, mask=pairwise_bias, src_mask=src_mask)
-        src=res+self.dropout1(src)
-        src = self.norm1(src)
+        with record_function("ribonanza::tel::self_attention"):
+            res=src
+            src,attention_weights = self.self_attn(src, src, src, mask=pairwise_bias, src_mask=src_mask)
+            src=res+self.dropout1(src)
+            src = self.norm1(src)
         
         #sequence transition
-        res=src
-        src=self.sequence_transititon(src)
-        src = res + self.dropout2(src)
-        src = self.norm2(src)
+        with record_function("ribonanza::tel::sequence_transition"):
+            res=src
+            src=self.sequence_transititon(src)
+            src = res + self.dropout2(src)
+            src = self.norm2(src)
 
         #pair track ops
-        pairwise_features=pairwise_features+self.outer_product_mean(src)
-        pairwise_features=pairwise_features+self.pair_dropout_out(self.triangle_update_out(pairwise_features,src_mask))
-        pairwise_features=pairwise_features+self.pair_dropout_in(self.triangle_update_in(pairwise_features,src_mask))
-        if self.use_triangular_attention:
-            pairwise_features=pairwise_features+self.pair_attention_dropout_out(self.triangle_attention_out(pairwise_features,src_mask))
-            pairwise_features=pairwise_features+self.pair_attention_dropout_in(self.triangle_attention_in(pairwise_features,src_mask))
-        pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
-        if return_aw:
-            return src,pairwise_features,attention_weights
-        else:
-            return src,pairwise_features
+        with record_function("ribonanza::tel::pairwise_track"):
+            pairwise_features=pairwise_features+self.outer_product_mean(src)
+            pairwise_features=pairwise_features+self.pair_dropout_out(self.triangle_update_out(pairwise_features,src_mask))
+            pairwise_features=pairwise_features+self.pair_dropout_in(self.triangle_update_in(pairwise_features,src_mask))
+            if self.use_triangular_attention:
+                pairwise_features=pairwise_features+self.pair_attention_dropout_out(self.triangle_attention_out(pairwise_features,src_mask))
+                pairwise_features=pairwise_features+self.pair_attention_dropout_in(self.triangle_attention_in(pairwise_features,src_mask))
+            pairwise_features=pairwise_features+self.pair_transition(pairwise_features)
+            if return_aw:
+                return src,pairwise_features,attention_weights
+            else:
+                return src,pairwise_features
 
 class PositionalEncoding(nn.Module):
 
@@ -421,26 +425,31 @@ class TriangleMultiplicativeModule(nn.Module):
         if exists(mask):
             mask = rearrange(mask, 'b i j -> b i j ()')
 
-        x = self.norm(x)
+        with record_function("ribonanza::tmm::initial_norm"):
+            x = self.norm(x)
 
-        left = self.left_proj(x)
-        right = self.right_proj(x)
+        with record_function("ribonanza::tmm::project"):
+            left = self.left_proj(x)
+            right = self.right_proj(x)
 
         if exists(mask):
             left = left * mask
             right = right * mask
 
-        left_gate = self.left_gate(x).sigmoid()
-        right_gate = self.right_gate(x).sigmoid()
-        out_gate = self.out_gate(x).sigmoid()
+        with record_function("ribonanza::tmm::gate"):
+            left_gate = self.left_gate(x).sigmoid()
+            right_gate = self.right_gate(x).sigmoid()
+            out_gate = self.out_gate(x).sigmoid()
 
-        left = left * left_gate
-        right = right * right_gate
+            left = left * left_gate
+            right = right * right_gate
 
-        out = einsum(self.mix_einsum_eq, left, right)
+        with record_function("ribonanza::tmm::einsum"):
+            out = einsum(self.mix_einsum_eq, left, right)
 
-        out = self.to_out_norm(out)
-        out = out * out_gate
+        with record_function("ribonanza::tmm::final_norm"):
+            out = self.to_out_norm(out)
+            out = out * out_gate
         return self.to_out(out)
 
 
