@@ -146,6 +146,8 @@ lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,len(train_loade
 #exit()
 optimizer, train_loader, val_loader, lr_schedule = accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule)
 
+#torch._logging.set_logs(output_code=True)
+
 @torch.compile(fullgraph=False)
 def optimizer_step():
     optimizer.step()
