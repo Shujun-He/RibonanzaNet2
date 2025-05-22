@@ -4,8 +4,7 @@ project(triangle_mult_cuda CUDA CXX)
 find_package(Torch REQUIRED)
 find_package(CUDA REQUIRED)
 
-# CUDA 11以降のアーキテクチャ設定（BFloat16サポート用）
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_80")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -arch=sm_80 --extended-lambda --expt-relaxed-constexpr")
 
 add_library(triangle_mult_cuda SHARED
     triangle_mult.cpp
