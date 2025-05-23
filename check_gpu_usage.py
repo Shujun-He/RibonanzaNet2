@@ -1,5 +1,6 @@
 import paramiko
 
+
 def execute_nvidia_smi(hostname):
     try:
         # Create an SSH client
@@ -27,6 +28,7 @@ def execute_nvidia_smi(hostname):
 
     except Exception as e:
         print(f"Failed to connect to {hostname}: {str(e)}")
+
 
 # List of hosts to check
 gpu_hosts = [f"gpu{str(i).zfill(3)}" for i in range(1, 17)]

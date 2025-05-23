@@ -2,10 +2,10 @@ import h5py
 import numpy as np
 import os
 
-os.system('mkdir data')
+os.system("mkdir data")
 
-data_dict = h5py.File('../../Ribonanza2A_Genscript.v0.1.0.hdf5', 'r')
-SNR=data_dict['signal_to_noise'][:]
+data_dict = h5py.File("../../Ribonanza2A_Genscript.v0.1.0.hdf5", "r")
+SNR = data_dict["signal_to_noise"][:]
 
 # new_data_dict['r_norm']=data_dict['r_norm'][:]
 # new_data_dict['sequences']=data_dict['sequences'][:]
@@ -29,8 +29,7 @@ SNR=data_dict['signal_to_noise'][:]
 # new_data_dict['sequences']=data_dict['sequences'][:]
 # new_data_dict['signal_to_noise']=data_dict['signal_to_noise'][:]
 
-#save as memmap  r_norm sequences signal_to_noise
-
+# save as memmap  r_norm sequences signal_to_noise
 
 
 # data_dict=new_data_dict

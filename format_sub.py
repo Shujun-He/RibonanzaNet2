@@ -3,89 +3,103 @@ from tqdm import tqdm
 import numpy as np
 import pickle
 
-#df=pl.read_csv("submission_v2.2.0.csv")
+# df=pl.read_csv("submission_v2.2.0.csv")
 
-#sample_sub=pl.read_csv("/home/exx/Downloads/sample_submission_STANDARD2_NRES207.v2.2.0.csv")
-test=pl.read_csv("../../input/test_sequences.csv")#.rename({"sequence_id": "id"})
-#test_no_id=pl.read_csv("../../input/v2.2.0/test_sequences.v2.2.0_no_id.csv.gz")
+# sample_sub=pl.read_csv("/home/exx/Downloads/sample_submission_STANDARD2_NRES207.v2.2.0.csv")
+test = pl.read_csv("../../input/test_sequences.csv")  # .rename({"sequence_id": "id"})
+# test_no_id=pl.read_csv("../../input/v2.2.0/test_sequences.v2.2.0_no_id.csv.gz")
 
-#solution_arrayed=pl.read_csv("../../input/v2.2.0/CONFIDENTIAL/test_data_arrayed_KEEP_CONFIDENTIAL.v2.2.0.csv.gz")
-solution=pl.read_csv("../../input/solution_CONFIDENTIAL.v3.3.0.csv",infer_schema_length=0)
-#exit()
-solution=solution.with_columns(pl.col('reactivity_DMS_MaP').cast(pl.Float64, strict=False))
-solution=solution.with_columns(pl.col('reactivity_2A3_MaP').cast(pl.Float64, strict=False))
+# solution_arrayed=pl.read_csv("../../input/v2.2.0/CONFIDENTIAL/test_data_arrayed_KEEP_CONFIDENTIAL.v2.2.0.csv.gz")
+solution = pl.read_csv(
+    "../../input/solution_CONFIDENTIAL.v3.3.0.csv", infer_schema_length=0
+)
+# exit()
+solution = solution.with_columns(
+    pl.col("reactivity_DMS_MaP").cast(pl.Float64, strict=False)
+)
+solution = solution.with_columns(
+    pl.col("reactivity_2A3_MaP").cast(pl.Float64, strict=False)
+)
 
-with open("preds.p",'rb') as f:
-    preds=pickle.load(f)
+with open("preds.p", "rb") as f:
+    preds = pickle.load(f)
 
-#test_no_id=test_no_id.join(test,on='sequence',how='left')
+# test_no_id=test_no_id.join(test,on='sequence',how='left')
 
-#df=df.join(test[['id','id_min','id_max']],on='id',how='left').sort('id_min')
-label_names=["reactivity_{:04d}".format(number+1) for number in range(207)]
+# df=df.join(test[['id','id_min','id_max']],on='id',how='left').sort('id_min')
+label_names = ["reactivity_{:04d}".format(number + 1) for number in range(207)]
 # preds=[]
 # for idx,grouped_df in tqdm(df.groupby('id',maintain_order=True),total=len(df)//2):
 #     length=grouped_df['id_max'][0]-grouped_df['id_min'][0]+1
 
-#preds=df[label_names].to_numpy()
-standard_preds=[]
+# preds=df[label_names].to_numpy()
+standard_preds = []
 # arrayed_solution=[]
 # arrayed_solution_all=solution_arrayed[label_names].to_numpy()
 # df_2A3_MaP=df.filter(df['experiment_type']=='2A3_MaP')[label_names].to_numpy()
 # df_DMS_MaP=df.filter(df['experiment_type']=='DMS_MaP')[label_names].to_numpy()
 for i in tqdm(range(len(test))):
-    length=test['id_max'][i]-test['id_min'][i]+1
-    id=test['sequence_id'][i]
-    pre_truncated=preds[id]
+    length = test["id_max"][i] - test["id_min"][i] + 1
+    id = test["sequence_id"][i]
+    pre_truncated = preds[id]
     standard_preds.append(pre_truncated[:length])
-    #exit()
-    #arrayed_solution.append(np.stack([arrayed_solution[i+len(preds)//2],arrayed_solution[i]],-1))
-    #exit()
+    # exit()
+    # arrayed_solution.append(np.stack([arrayed_solution[i+len(preds)//2],arrayed_solution[i]],-1))
+    # exit()
     # preds_tmp=grouped_df[label_names[:length]].to_numpy().transpose()
     # preds.append(preds_tmp)
-    #break
-standard_preds=np.concatenate(standard_preds)
-#arrayed_solution=np.concatenate(arrayed_solution)
-assert len(standard_preds)==len(solution)
+    # break
+standard_preds = np.concatenate(standard_preds)
+# arrayed_solution=np.concatenate(arrayed_solution)
+assert len(standard_preds) == len(solution)
 
-public_solution=solution.filter(solution['Usage']=='Public')
-public_select=public_solution['id'].cast(pl.Int64).to_numpy()
+public_solution = solution.filter(solution["Usage"] == "Public")
+public_select = public_solution["id"].cast(pl.Int64).to_numpy()
 print(f"total amount of public: {len(public_solution)}")
-public_gts=public_solution[['reactivity_DMS_MaP','reactivity_2A3_MaP']].to_numpy()#.transpose()
-public_score=np.abs(standard_preds[public_select]-public_gts).mean()
+public_gts = public_solution[
+    ["reactivity_DMS_MaP", "reactivity_2A3_MaP"]
+].to_numpy()  # .transpose()
+public_score = np.abs(standard_preds[public_select] - public_gts).mean()
 
-private_solution=solution.filter(solution['Usage']=='Private')
-private_select=private_solution['id'].cast(pl.Int64).to_numpy()
+private_solution = solution.filter(solution["Usage"] == "Private")
+private_select = private_solution["id"].cast(pl.Int64).to_numpy()
 print(f"total amount of private: {len(private_solution)}")
-private_gts=private_solution[['reactivity_DMS_MaP','reactivity_2A3_MaP']].to_numpy()#.transpose()
-private_score=np.abs(standard_preds[private_select]-private_gts).mean()
+private_gts = private_solution[
+    ["reactivity_DMS_MaP", "reactivity_2A3_MaP"]
+].to_numpy()  # .transpose()
+private_score = np.abs(standard_preds[private_select] - private_gts).mean()
 
-with open("score.txt",'w+') as f:
+with open("score.txt", "w+") as f:
     f.write(f"Public: {public_score}\n")
     f.write(f"Private: {private_score}\n")
 
-solution=pl.read_parquet("../../input/solution_SUBLIBRARIES_CONFIDENTIAL.v3.3.0.csv.parquet")
-#exit()
-solution=solution.with_columns(pl.col('reactivity_DMS_MaP').cast(pl.Float64, strict=False))
-solution=solution.with_columns(pl.col('reactivity_2A3_MaP').cast(pl.Float64, strict=False))
+solution = pl.read_parquet(
+    "../../input/solution_SUBLIBRARIES_CONFIDENTIAL.v3.3.0.csv.parquet"
+)
+# exit()
+solution = solution.with_columns(
+    pl.col("reactivity_DMS_MaP").cast(pl.Float64, strict=False)
+)
+solution = solution.with_columns(
+    pl.col("reactivity_2A3_MaP").cast(pl.Float64, strict=False)
+)
 
-sublibraries=solution['Usage'].unique().to_list()
+sublibraries = solution["Usage"].unique().to_list()
 sublibraries.sort()
-sublibraries=sublibraries[1:]
+sublibraries = sublibraries[1:]
 
-gt=solution[['reactivity_DMS_MaP','reactivity_2A3_MaP']].to_numpy()
+gt = solution[["reactivity_DMS_MaP", "reactivity_2A3_MaP"]].to_numpy()
 
-sub_library_scores={}
+sub_library_scores = {}
 for library in tqdm(sublibraries):
-    select=(solution['Usage']==library).to_numpy().astype('bool')
-    score=np.abs(standard_preds[select]-gt[select]).mean()
-    sub_library_scores[library]=score
+    select = (solution["Usage"] == library).to_numpy().astype("bool")
+    score = np.abs(standard_preds[select] - gt[select]).mean()
+    sub_library_scores[library] = score
 
 import json
 
 with open("sub_library_scores.json", "w+") as json_file:
     json.dump(sub_library_scores, json_file, indent=4)
-
-
 
 
 # sub=pl.read_csv("../../input//v2.3.0/sample_submission.v2.3.0.csv.gz")
@@ -103,7 +117,7 @@ with open("sub_library_scores.json", "w+") as json_file:
 # #series = pl.Series(name="new_column", values=numpy_array)
 # sub.write_csv("submission.csv")
 # Set the column in the DataFrame
-#df = df.with_column(series)
+# df = df.with_column(series)
 # exit()
 #
 # for i in range(207):

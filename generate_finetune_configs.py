@@ -69,21 +69,19 @@ for idx, combination in enumerate(itertools.product(*values)):
         config[key] = value
 
     # Save the updated configuration to a YAML file
-    config_filename = os.path.join(output_dir, f"config_{idx+1}.yaml")
+    config_filename = os.path.join(output_dir, f"config_{idx + 1}.yaml")
     with open(config_filename, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
     print(f"Saved config: {config_filename}")
 
     # Generate a job script
-    job_name = f"shujun-job-{idx+1}"
+    job_name = f"shujun-job-{idx + 1}"
     job_script_content = job_script_template.format(
-        job_name=job_name,
-        config_path=config_filename,
-        slurm_out_dir=slurm_out_dir
+        job_name=job_name, config_path=config_filename, slurm_out_dir=slurm_out_dir
     )
 
     # Save the job script to a file
-    job_script_filename = os.path.join(job_script_dir, f"job_{idx+1}.sh")
+    job_script_filename = os.path.join(job_script_dir, f"job_{idx + 1}.sh")
     with open(job_script_filename, "w") as f:
         f.write(job_script_content)
     print(f"Saved job script: {job_script_filename}")
