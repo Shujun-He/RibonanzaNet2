@@ -40,7 +40,13 @@ np.random.seed(0)
 config = load_config_from_yaml(args.config_path)
 config.print()
 
-accelerator = Accelerator(mixed_precision="bf16")
+
+manual_seed = getattr(config, "weight_initialization_seed", None)
+if manual_seed is not None:
+    torch.manual_seed(manual_seed)
+
+
+accelerator = Accelerator(config.mixed_precision)
 
 os.environ["POLARS_MAX_THREADS"] = "1"
 os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
@@ -100,7 +106,7 @@ train_dataset = RNADataset(
 train_loader = DataLoader(
     train_dataset,
     batch_size=config.batch_size,
-    shuffle=True,
+    shuffle=getattr(config, "shuffle_training_data", True),
     collate_fn=Custom_Collate_Obj(config.max_len),
     num_workers=num_workers,
     pin_memory=True,
@@ -176,8 +182,13 @@ if args.compile == "true":
     model = torch.compile(model, dynamic=False)
 # model = model
 
+
 best_val_loss = np.inf
 total_steps = 0
+
+if getattr(config, "save_initial_state", False):
+    accelerator.save_state(f"models/step_{total_steps}", safe_serialization=False)
+
 for epoch in range(config.epochs):
     # training loop
 
