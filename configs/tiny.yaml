@@ -1,0 +1,47 @@
+# Model hyperparameters
+learning_rate: 0.01 # The learning rate for the optimizer
+batch_size: 1        # Number of samples per batch
+test_batch_size: 1        # Number of samples per batch
+epochs: 1            # Total training epochs
+#optimizer: "ranger"       # Optimization algorithm
+dropout: 0 #0.1     # Dropout regularization rate
+attn_dropout: 0 #0.1   # Dropout probability for scaled dot product attention
+weight_initialization_seed: 0
+save_initial_state: true
+mixed_precision: "bf16"
+
+weight_decay: 0.0001
+k: 5 #not used
+ninp: 16
+nlayers: 1
+nclass: 2
+ntoken: 6 #AUGC + padding/N token
+nhead: 2
+#use_bpp: False
+use_flip_aug: false
+#bpp_file_folder: "../../input/bpp_files/"
+gradient_accumulation_steps: 1
+use_triangular_attention: false
+pairwise_dimension: 8
+dim_msa: 16
+clip_grad_norm: 1
+max_len: 177
+log_interval: 10 #save checkpoints every log_interval steps
+previous_model_path: "none"
+use_noise_aug: false
+shuffle_training_data: false
+
+#Data scaling
+use_data_percentage: 0.001
+use_dirty_data: true # turn off for data scaling and data dropout experiments
+
+
+# Other configurations
+fold: 0
+nfolds: 6
+input_dir: "../../input/"
+gpu_id: "0"
+
+# data files
+hdf_files:
+  - /usr/local/google/home/jbms/OneMil.v0.1.0.hdf5

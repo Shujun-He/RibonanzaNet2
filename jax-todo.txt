@@ -1,0 +1,7 @@
+Ensure that jax validation exactly matches torch
+Implement mixed-precision training for JAX (use jmp library)
+Implement multi-host/multi-device training for JAX
+Test on JAX code on GPUs and TPUs
+Implement distributed training launch script for GCP
+Write oofs
+Write CSV logs
