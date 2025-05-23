@@ -9,6 +9,7 @@ attn_dropout: 0 #0.1   # Dropout probability for scaled dot product attention
 weight_initialization_seed: 0
 save_initial_state: true
 mixed_precision: "bf16"
+mixed_precision_policy: "compute=bfloat16,params=float32,output=bfloat16"
 
 weight_decay: 0.0001
 k: 5 #not used

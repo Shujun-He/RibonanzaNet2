@@ -60,7 +60,7 @@ def get_train_and_validation_data_loaders(config):
 
     batches_per_epoch = len(train_indices) // config.batch_size
 
-    return train_loader, val_loader, batches_per_epoch
+    return train_loader, val_loader, batches_per_epoch, len(val_indices)
 
 
 def get_optimizer(model, config, batches_per_epoch: int):
@@ -165,7 +165,7 @@ def get_eval_step(use_flip_aug: bool):
 class Trainer:
     def __init__(self, config):
         self.config = config
-        train_loader, self.val_loader, self.batches_per_epoch = (
+        train_loader, self.val_loader, self.batches_per_epoch, self.num_val_examples = (
             get_train_and_validation_data_loaders(config)
         )
         self.logger = CSVLogger(
@@ -250,42 +250,71 @@ class Trainer:
 
     def run_training(self):
         self.train_state.model.fast.train()
-        for batch in self.training_data_loader:
-            print(batch["SN"])
-            train_step(
-                train_state=self.train_state,
-                batch=batch,
-                # FIXME include jax process number also
-                rngs=nnx.Rngs(
-                    dropout=jax.random.fold_in(self.dropout_key, self.train_state.step)
-                ),
-            )
-            print(
-                f"performed step={int(self.train_state.step)} loss={float(self.train_state.metrics.loss.compute())}"
-            )
+        tbar = None
+        batch_size = self.config.batch_size
+
+        def update_bar():
+            nonlocal tbar
+            step = int(self.train_state.step)
+            epoch = (step - 1) // self.batches_per_epoch + 1
+            step_within_epoch = step % self.batches_per_epoch
+            if step_within_epoch == 0 and step > 0:
+                step_within_epoch = self.batches_per_epoch
+            if tbar is None:
+                tbar = tqdm(total=self.batches_per_epoch * batch_size)
+                tbar.update(step_within_epoch * batch_size)
+            else:
+                tbar.update(batch_size)
+            avg_loss = float(self.train_state.metrics.loss.compute())
+            tbar.set_description(f"Epoch {epoch} Loss: {avg_loss:.05f}")
+
+        try:
+            update_bar()
+            for batch in self.training_data_loader:
+                train_step(
+                    train_state=self.train_state,
+                    batch=batch,
+                    # FIXME include jax process number also
+                    rngs=nnx.Rngs(
+                        dropout=jax.random.fold_in(
+                            self.dropout_key, self.train_state.step
+                        )
+                    ),
+                )
+                step = int(self.train_state.step)
+                update_bar()
+                self.save_checkpoint()
+                if (step % self.batches_per_epoch) == 0:
+                    tbar.close()
+                    tbar = None
+                    self.run_validation()
             self.save_checkpoint()
-            if (self.train_state.step % self.batches_per_epoch) == 0:
-                self.run_validation()
-        self.save_checkpoint()
+        finally:
+            if tbar is not None:
+                tbar.close()
 
     def run_validation(self):
-        tbar = tqdm(self.val_loader)
-        print("doing val")
-        metrics = nnx.MultiMetric(
-            loss=nnx.metrics.Average(),
-        )
-        model = self.train_state.model.slow
-        model.eval()
-        for batch in tbar:
-            loss = self.eval_step(
-                model=model,
-                metrics=metrics,
-                batch=batch,
+        step = int(self.train_state.step)
+        epoch = (step - 1) // self.batches_per_epoch + 1
+        examples_per_batch = self.config.test_batch_size
+        with tqdm(total=self.num_val_examples) as tbar:
+            metrics = nnx.MultiMetric(
+                loss=nnx.metrics.Average(),
             )
-            metrics.update(values=loss)
+            model = self.train_state.model.slow
+            model.eval()
+            for batch in self.val_loader:
+                loss = self.eval_step(
+                    model=model,
+                    metrics=metrics,
+                    batch=batch,
+                )
+                metrics.update(values=loss)
+                avg_loss = float(metrics.loss.compute())
+                tbar.update(examples_per_batch)
+                tbar.set_description(f"Epoch: {epoch} Validation loss: {avg_loss:.05f}")
 
 
-# --- Main Script ---
 def main(args):
     start_time = time.time()
 
@@ -298,14 +327,18 @@ def main(args):
     os.makedirs("oofs", exist_ok=True)
 
     trainer = Trainer(config=config)
-    # trainer.restore_checkpoint()
-    import jax_torch_compare
 
-    new_state = jax_torch_compare.load_torch_model_into_jax(
-        "models/step_0/pytorch_model.bin", nnx.state(trainer.train_state.model.fast)
-    )
-    nnx.update(trainer.train_state.model.fast, new_state)
-    nnx.update(trainer.train_state.model.slow, new_state)
+    if getattr(config, "load_torch_initial_state", False):
+        import jax_torch_compare
+
+        new_state = jax_torch_compare.load_torch_model_into_jax(
+            "models/step_0/pytorch_model.bin", nnx.state(trainer.train_state.model.fast)
+        )
+        nnx.update(trainer.train_state.model.fast, new_state)
+        nnx.update(trainer.train_state.model.slow, new_state)
+    else:
+        trainer.restore_checkpoint()
+
     trainer.run_training()
 
     end_time = time.time()

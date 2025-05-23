@@ -463,6 +463,18 @@ wheels = [
 ]
 
 [[package]]
+name = "jmp"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/b0/e90fbbffef4b345329c878a69f0336d3edc5a1f9fcba193931aca2132d62/jmp-0.0.4.tar.gz", hash = "sha256:5dfeb0fd7c7a9f72a70fff0aab9d0cbfae32a809c02f4037ff3485ceb33e1730", size = 18582 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/e5/cce82de2831e5aff9332d8d624bb57188f1b2af6ccf6979caf898a8a4348/jmp-0.0.4-py3-none-any.whl", hash = "sha256:6aa7adbddf2bd574b28c7faf6e81a735eb11f53386447896909c6968dc36807d", size = 18274 },
+]
+
+[[package]]
 name = "joblib"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1164,6 +1176,7 @@ dependencies = [
     { name = "grain" },
     { name = "h5py" },
     { name = "jax" },
+    { name = "jmp" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "optax" },
@@ -1194,6 +1207,7 @@ requires-dist = [
     { name = "grain", specifier = ">=0.2.9" },
     { name = "h5py", specifier = ">=3.13.0" },
     { name = "jax", specifier = ">=0.6.1" },
+    { name = "jmp", specifier = ">=0.0.4" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "optax", specifier = ">=0.2.4" },

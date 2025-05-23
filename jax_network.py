@@ -11,6 +11,7 @@ from functools import (
 )  # partialmethod for Dropout convenience classes
 
 from einops import rearrange
+import jmp
 
 
 # TENSOR_LOG = []
@@ -109,9 +110,7 @@ class DropoutColumnwise(Dropout):
 def uniform_scaled_initializer(scale_factor: float, in_features: int):
     bound = (1.0 / (in_features**0.5)) * scale_factor
 
-    def init(
-        key, shape: tuple[int, ...], dtype: jnp.dtype = jnp.float32
-    ) -> jnp.ndarray:
+    def init(key, shape: tuple[int, ...], dtype: jnp.dtype) -> jnp.ndarray:
         return jax.random.uniform(key, shape, dtype, minval=-bound, maxval=bound)
 
     return init
@@ -169,6 +168,7 @@ class MultiHeadAttention(nnx.Module):
         dropout: float,
         attn_dropout: float,
         *,
+        jmp_policy: jmp.Policy,
         rngs: Rngs,
     ):
         self.n_head = n_head
@@ -180,6 +180,8 @@ class MultiHeadAttention(nnx.Module):
             n_head * d_k,
             use_bias=False,
             kernel_init=kernel_init(d_model),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         self.w_ks = nnx.Linear(
@@ -187,6 +189,8 @@ class MultiHeadAttention(nnx.Module):
             n_head * d_k,
             use_bias=False,
             kernel_init=kernel_init(d_model),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         self.w_vs = nnx.Linear(
@@ -194,12 +198,15 @@ class MultiHeadAttention(nnx.Module):
             n_head * d_v,
             use_bias=False,
             kernel_init=kernel_init(d_model),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         # self.fc = nnx.Linear(n_head * d_v, d_model, use_bias=False, rngs=rngs) # in original, this fc is commented out
 
         self.attention = ScaledDotProductAttention(
-            temperature=d_k**0.5, attn_dropout=attn_dropout
+            temperature=d_k**0.5,
+            attn_dropout=attn_dropout,
         )
         # self.dropout = nnx.Dropout(dropout) # Not used if fc is commented out
         # self.layer_norm = nnx.LayerNorm(d_model, rngs=rngs) # Not used in original forward
@@ -282,18 +289,34 @@ class TriangleMultiplicativeModule(nnx.Module):
         hidden_dim: int | None = None,
         mix: Literal["ingoing", "outgoing"] = "ingoing",
         rngs: Rngs,
+        jmp_policy: jmp.Policy,
         kernel_init,
     ):
         assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
 
         hidden_dim = hidden_dim if hidden_dim is not None else dim
-        self.norm = nnx.LayerNorm(dim, rngs=rngs)
+        self.norm = nnx.LayerNorm(
+            dim,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
 
         self.left_proj = nnx.Linear(
-            dim, hidden_dim, kernel_init=kernel_init(dim), rngs=rngs
+            dim,
+            hidden_dim,
+            kernel_init=kernel_init(dim),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
         )
         self.right_proj = nnx.Linear(
-            dim, hidden_dim, kernel_init=kernel_init(dim), rngs=rngs
+            dim,
+            hidden_dim,
+            kernel_init=kernel_init(dim),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
         )
 
         # Initialize all gates to be identity functions
@@ -303,6 +326,8 @@ class TriangleMultiplicativeModule(nnx.Module):
             hidden_dim,
             kernel_init=initializers.zeros,
             bias_init=initializers.ones,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         self.right_gate = nnx.Linear(
@@ -310,6 +335,8 @@ class TriangleMultiplicativeModule(nnx.Module):
             hidden_dim,
             kernel_init=initializers.zeros,
             bias_init=initializers.ones,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         self.out_gate = nnx.Linear(
@@ -317,6 +344,8 @@ class TriangleMultiplicativeModule(nnx.Module):
             hidden_dim,
             kernel_init=initializers.zeros,
             bias_init=initializers.ones,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
 
@@ -325,9 +354,19 @@ class TriangleMultiplicativeModule(nnx.Module):
         elif mix == "ingoing":
             self.mix_einsum_eq = "... k i d, ... k j d -> ... i j d"
 
-        self.to_out_norm = nnx.LayerNorm(hidden_dim, rngs=rngs)
+        self.to_out_norm = nnx.LayerNorm(
+            hidden_dim,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
         self.to_out = nnx.Linear(
-            hidden_dim, dim, rngs=rngs, kernel_init=kernel_init(hidden_dim)
+            hidden_dim,
+            dim,
+            rngs=rngs,
+            kernel_init=kernel_init(hidden_dim),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
         )
 
     def __call__(self, x: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
@@ -378,6 +417,7 @@ class TriangleAttention(nnx.Module):
         n_heads: int = 4,
         wise: Literal["row", "col"] = "row",
         *,
+        jmp_policy: jmp.Policy,
         rngs: Rngs,
     ):
         super().__init__()
@@ -385,15 +425,38 @@ class TriangleAttention(nnx.Module):
         self.wise = wise
         self.norm = nnx.LayerNorm(in_dim, rngs=rngs)
         self.to_qkv = linear_with_torch_initialization(
-            in_dim, dim * 3 * n_heads, use_bias=False, rngs=rngs
+            in_dim,
+            dim * 3 * n_heads,
+            use_bias=False,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
         )
         self.linear_for_pair = linear_with_torch_initialization(
-            in_dim, n_heads, use_bias=False, rngs=rngs
+            in_dim,
+            n_heads,
+            use_bias=False,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
         )
         self.to_gate = nnx.Sequential(
-            linear_with_torch_initialization(in_dim, in_dim, rngs=rngs), jax.nn.sigmoid
+            linear_with_torch_initialization(
+                in_dim,
+                in_dim,
+                param_dtype=jmp_policy.param_dtype,
+                dtype=jmp_policy.compute_dtype,
+                rngs=rngs,
+            ),
+            jax.nn.sigmoid,
         )
-        self.to_out = linear_with_torch_initialization(n_heads * dim, in_dim, rngs=rngs)
+        self.to_out = linear_with_torch_initialization(
+            n_heads * dim,
+            in_dim,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
 
     def __call__(self, z: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
         """
@@ -461,6 +524,7 @@ class OuterProductMean(nnx.Module):
         kernel_init=None,
         bias_init=None,
         *,
+        jmp_policy: jmp.Policy,
         rngs: Rngs,
     ):
         self.proj_down1 = linear_with_torch_initialization(
@@ -468,6 +532,8 @@ class OuterProductMean(nnx.Module):
             dim_msa,
             kernel_init=kernel_init(in_dim) if kernel_init is not None else None,
             bias_init=bias_init,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
         self.proj_down2 = linear_with_torch_initialization(
@@ -475,6 +541,8 @@ class OuterProductMean(nnx.Module):
             pairwise_dim,
             kernel_init=kernel_init(dim_msa**2) if kernel_init is not None else None,
             bias_init=bias_init,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
 
@@ -496,16 +564,30 @@ class OuterProductMean(nnx.Module):
 
 
 class RelPos(nnx.Module):  # Renamed to avoid conflict if relpos is a function
-    def __init__(self, dim: int = 64, max_rel_pos: int = 16, *, rngs: Rngs):
+    def __init__(
+        self,
+        dim: int = 64,
+        max_rel_pos: int = 16,
+        *,
+        jmp_policy: jmp.Policy,
+        rngs: Rngs,
+    ):
         # max_rel_pos defines the range [-max_rel_pos, max_rel_pos], so 2*max_rel_pos + 1 bins
         self.num_bins = 2 * max_rel_pos + 1
-        self.linear = linear_with_torch_initialization(self.num_bins, dim, rngs=rngs)
+        self.linear = linear_with_torch_initialization(
+            self.num_bins,
+            dim,
+            rngs=rngs,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+        )
         self.max_rel_pos = max_rel_pos
+        self.jmp_policy = jmp_policy
 
     def __call__(self, src: jnp.ndarray) -> jnp.ndarray:
         # src: (B, L, D_model) - only L is used.
         L = src.shape[1]
-        res_id = jnp.arange(L)
+        res_id = jnp.arange(L, dtype=self.jmp_policy.compute_dtype)
 
         # Relative positions: (L, L)
         d = jnp.expand_dims(res_id, axis=1) - jnp.expand_dims(res_id, axis=0)
@@ -518,7 +600,7 @@ class RelPos(nnx.Module):  # Renamed to avoid conflict if relpos is a function
 
         # One-hot encode: (L, L, num_bins)
         d_onehot = jax.nn.one_hot(
-            d_shifted, num_classes=self.num_bins, dtype=jnp.float32
+            d_shifted, num_classes=self.num_bins, dtype=self.jmp_policy.compute_dtype
         )
 
         # Project to embedding dimension: (L, L, dim)
@@ -547,6 +629,7 @@ class ConvTransformerEncoderLayer(nnx.Module):
         scale_factor: float,  # For custom init
         *,
         rngs: Rngs,
+        jmp_policy: jmp.Policy,
     ):
         dk = d_model // nhead
         dv = d_model // nhead
@@ -564,21 +647,39 @@ class ConvTransformerEncoderLayer(nnx.Module):
             kernel_init=lambda in_features: uniform_scaled_initializer(
                 scale_factor, in_features
             ),
+            jmp_policy=jmp_policy,
             rngs=rngs,
         )
 
-        self.norm1 = nnx.LayerNorm(d_model, rngs=rngs)
-        self.norm2 = nnx.LayerNorm(d_model, rngs=rngs)
+        self.norm1 = nnx.LayerNorm(
+            d_model,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
+        self.norm2 = nnx.LayerNorm(
+            d_model,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
         self.dropout1 = nnx.Dropout(dropout)
         self.dropout2 = nnx.Dropout(dropout)
 
         # Pairwise bias projection
-        self.pairwise_norm = nnx.LayerNorm(pairwise_dimension, rngs=rngs)
+        self.pairwise_norm = nnx.LayerNorm(
+            pairwise_dimension,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
+            rngs=rngs,
+        )
         self.pairwise2heads = nnx.Linear(
             pairwise_dimension,
             nhead,
             use_bias=False,
             kernel_init=uniform_scaled_initializer(scale_factor, pairwise_dimension),
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
 
@@ -591,6 +692,7 @@ class ConvTransformerEncoderLayer(nnx.Module):
                 scale_factor, in_features
             ),
             bias_init=initializers.zeros,
+            jmp_policy=jmp_policy,
             rngs=rngs,
         )
         # (OPM's internal linears would need scale_factor if recursive_init applied to them)
@@ -602,6 +704,7 @@ class ConvTransformerEncoderLayer(nnx.Module):
             kernel_init=lambda in_features: uniform_scaled_initializer(
                 scale_factor, in_features
             ),
+            jmp_policy=jmp_policy,
             rngs=rngs,
         )
         self.triangle_update_in = TriangleMultiplicativeModule(
@@ -610,6 +713,7 @@ class ConvTransformerEncoderLayer(nnx.Module):
             kernel_init=lambda in_features: uniform_scaled_initializer(
                 scale_factor, in_features
             ),
+            jmp_policy=jmp_policy,
             rngs=rngs,
         )
         self.pair_dropout_out = DropoutRowwise(dropout)  # batch_dim=-3
@@ -624,24 +728,28 @@ class ConvTransformerEncoderLayer(nnx.Module):
                 in_dim=pairwise_dimension,
                 dim=pairwise_dimension // 4,  # dim_head for tri_attn
                 wise="row",
+                jmp_policy=jmp_policy,
                 rngs=rngs,
             )
             self.triangle_attention_in = TriangleAttention(
                 in_dim=pairwise_dimension,
                 dim=pairwise_dimension // 4,
                 wise="col",
+                jmp_policy=jmp_policy,
                 rngs=rngs,
             )
             self.pair_attention_dropout_out = DropoutRowwise(dropout)
             self.pair_attention_dropout_in = DropoutColumnwise(dropout)  # batch_dim=-2
 
         # Sequence Transition (FFN)
-        self.sequence_transititon = nnx.Sequential(
+        self.sequence_transition = nnx.Sequential(
             nnx.Linear(
                 d_model,
                 dim_feedforward,
                 kernel_init=uniform_scaled_initializer(scale_factor, d_model),
                 bias_init=initializers.zeros,
+                param_dtype=jmp_policy.param_dtype,
+                dtype=jmp_policy.compute_dtype,
                 rngs=rngs,
             ),
             nnx.relu,
@@ -650,6 +758,8 @@ class ConvTransformerEncoderLayer(nnx.Module):
                 d_model,
                 kernel_init=uniform_scaled_initializer(scale_factor, dim_feedforward),
                 bias_init=initializers.zeros,
+                param_dtype=jmp_policy.param_dtype,
+                dtype=jmp_policy.compute_dtype,
                 rngs=rngs,
             ),
         )
@@ -664,6 +774,8 @@ class ConvTransformerEncoderLayer(nnx.Module):
                     scale_factor, pairwise_dimension
                 ),
                 bias_init=initializers.zeros,
+                param_dtype=jmp_policy.param_dtype,
+                dtype=jmp_policy.compute_dtype,
                 rngs=rngs,
             ),
             jax.nn.relu,
@@ -674,6 +786,8 @@ class ConvTransformerEncoderLayer(nnx.Module):
                     scale_factor, pairwise_dimension * 4
                 ),
                 bias_init=initializers.zeros,
+                param_dtype=jmp_policy.param_dtype,
+                dtype=jmp_policy.compute_dtype,
                 rngs=rngs,
             ),
         )
@@ -718,7 +832,7 @@ class ConvTransformerEncoderLayer(nnx.Module):
 
         # Sequence transition
         res = src
-        src = self.sequence_transititon(src)
+        src = self.sequence_transition(src)
         log_tensor("src after sequence transition", src)
         src = res + self.dropout2(src, deterministic=deterministic, rngs=rngs)
         log_tensor("src after dropout2", src)
@@ -777,6 +891,7 @@ def embedding_init(padding_idx: int):
 class RibonanzaNet(nnx.Module):
     def __init__(self, config, *, rngs: Rngs):
         self.config = config
+        jmp_policy = jmp.get_policy(config.mixed_precision_policy)
         dim_feedforward = config.ninp * 4  # Standard feedforward dim
 
         # Embedding layer for source tokens
@@ -785,16 +900,20 @@ class RibonanzaNet(nnx.Module):
             features=config.ninp,
             embedding_init=embedding_init(padding_idx=4),
             rngs=rngs,
+            dtype=jmp_policy.compute_dtype,
         )
 
         # Positional encoding (relative, not absolute from original Transformer)
-        self.pos_encoder = RelPos(dim=config.pairwise_dimension, rngs=rngs)
+        self.pos_encoder = RelPos(
+            dim=config.pairwise_dimension, jmp_policy=jmp_policy, rngs=rngs
+        )
 
         # Initial Outer Product Mean to create pairwise features
         self.outer_product_mean = OuterProductMean(
             in_dim=config.ninp,
             dim_msa=config.dim_msa,
             pairwise_dim=config.pairwise_dimension,
+            jmp_policy=jmp_policy,
             rngs=rngs,
         )
 
@@ -818,6 +937,7 @@ class RibonanzaNet(nnx.Module):
                     attn_dropout=config.attn_dropout,
                     k=k,
                     scale_factor=scale_factor,
+                    jmp_policy=jmp_policy,
                     rngs=rngs,
                 )
             )
@@ -827,6 +947,8 @@ class RibonanzaNet(nnx.Module):
             out_features=config.nclass,
             kernel_init=uniform_scaled_initializer(scale_factor, config.ninp),
             bias_init=initializers.zeros,
+            param_dtype=jmp_policy.param_dtype,
+            dtype=jmp_policy.compute_dtype,
             rngs=rngs,
         )
 

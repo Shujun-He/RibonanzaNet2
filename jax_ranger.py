@@ -34,8 +34,21 @@ def ranger(
     )
 
 
-def nnx_compatible_lookahead(*args, **kwargs) -> optax.GradientTransformation:
-    base = optax.lookahead(*args, **kwargs)
+def nnx_compatible_lookahead(
+    *,
+    fast_optimizer,
+    sync_period: int,
+    slow_step_size: float,
+    reset_state: bool,
+    **kwargs,
+) -> optax.GradientTransformation:
+    base = optax.lookahead(
+        fast_optimizer=fast_optimizer,
+        sync_period=sync_period,
+        slow_step_size=slow_step_size,
+        reset_state=reset_state,
+        **kwargs,
+    )
     base_init_fn = base.init
     base_update_fn = base.update
 
