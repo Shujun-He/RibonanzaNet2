@@ -5,6 +5,7 @@ test_batch_size: 8        # Number of samples per batch
 epochs: 1            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
+attn_dropout: 0.1   # Dropout probability for scaled dot product attention
 weight_decay: 0.0001
 k: 5 #not used
 ninp: 384
