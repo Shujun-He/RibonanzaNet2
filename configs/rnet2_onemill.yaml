@@ -1,8 +1,8 @@
 # Model hyperparameters
 learning_rate: 0.001 # The learning rate for the optimizer
-batch_size: 8        # Number of samples per batch
+batch_size: 4        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
-epochs: 1            # Total training epochs
+epochs: 10            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0.1     # Dropout regularization rate
 weight_decay: 0.0001
@@ -44,35 +44,19 @@ r_norm_loss_weight: 1
 # Other configurations
 fold: 0
 nfolds: 6
-input_dir: "/lustre/fs0/scratch/shared/Ribonanza2/"
+input_dir: "/lustre/fs0/scratch/shujun/BothLanes_RawReads/"
 gpu_id: "0"
-previous_checkpoint: "../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin"
+previous_checkpoint: "none"
 #previous_checkpoint: "none"
 
 # data files
 hdf_files:
-  - Ribonanza2A_Genscript.v0.1.0.hdf5
-  - Ribonanza2B_full40B.v0.1.0.hdf5
-  - Ribonanza2C_full40B.v0.1.0.hdf5
-  - Ribonanza2D.v0.1.0.hdf5
-  - Ribonanza2E.v0.1.0.hdf5
+  - OneMil.v0.1.0.hdf5
+
 
 raw_read_files:
-  - - "A/RTB008_GenScript_DMS.memmap"
-    - "A/RTB010_GenScript_2A3.memmap"
-  - - "B/RTB004_Marathon_DMS.memmap"
-    - "B/RTB006_SSII_2A3.memmap"
-  - - "C/RTB000_Marathon_DMS.memmap"
-    - "C/RTB002_SSII_2A3.memmap"
-  - - "D/RTB000_Marathon_DMS.memmap"
-    - "D/RTB002_SSII_2A3.memmap"
-  - - "E/RTB000_Marathon_DMS.memmap"
-    - "E/RTB002_SSII_2A3.memmap"
+  - - "RTB000_Marathon_Bicine_3pct_DMS.memmap"
+    - "RTB002_SSII_Bicine_2A3.memmap"
 
 sublib_csv_files: 
-  - "sublib_id.csv" # if exists do stratified kfold else do random kfold
-  - "none"
-  - "none"
-  - "none"
-  - "none"
-
+  - 'none' # if exists do stratified kfold else do random kfold

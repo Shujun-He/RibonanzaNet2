@@ -129,7 +129,7 @@ def get_rawread_data(config):
     all_train_indices=[]
     all_val_indices=[]
     cnt=0
-    for hdf_file, memmap_files in zip(hdf_files,raw_read_files):
+    for hdf_file, memmap_files, sublib_csv in zip(hdf_files,raw_read_files,config.sublib_csv_files):
         print("Loading",hdf_file)
         #hdf5=pl.read_parquet(input_dir+hdf_file)
         #rawread,hdf5=load_rawread(input_dir+hdf_file,folder=folder)
@@ -140,14 +140,14 @@ def get_rawread_data(config):
             print(f)
             metadata=pl.read_csv(f.replace(".memmap","_meta_data.csv"))
             #print(metadata.head())
-            print(metadata['read_end_cat'].max()/1e9)
+            print(metadata['read_end_cat'].max()/1e9,'billion rawreads in this file')
             #exit()
 
             nrows=metadata['read_end_cat'].max()
 
             memmap=np.memmap(f,mode='r',dtype='uint8',shape=(nrows,177))
             rawread_indices=[(i-1,j) for i,j in zip(metadata['read_start_cat'],metadata['read_end_cat'])]
-            print(len(rawread_indices))
+            print(len(rawread_indices),'sequences in this file')
             raw_read_data[f]={'raw_data':memmap,'rawread_indices':rawread_indices}
         
 
@@ -157,24 +157,36 @@ def get_rawread_data(config):
 
         all_data.append([raw_read_data,hdf5])
 
-        if hdf_file=="Ribonanza2A_Genscript.v0.1.0.hdf5": #keep part of A as val
+        #if hdf_file=="Ribonanza2A_Genscript.v0.1.0.hdf5": #keep part of A as val
+        if cnt == 0: # use first file as val
             snr=hdf5['signal_to_noise'][:]
             high_quality_indices = np.where((snr>1.).sum(1)==2)[0]
             dirty_data_indices = np.where(((snr>snr_cutoff).sum(1)>=1)&((snr>1.).sum(1)!=2))[0]
 
-            #dataset names
-            sublib_data=pl.read_csv(f'{config.input_dir}/sublib_id.csv')['sublibrary'].to_list()
+            if sublib_csv != 'none':
+                #dataset names
+                sublib_data=pl.read_csv(f"{input_dir}/{sublib_csv}")['sublibrary'].to_list()
 
-            #StratifiedKFold on dataset
-            kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
-            fold_indices={}
-            high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
-            for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
-                fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
-            #exit()
+                #StratifiedKFold on dataset
+                kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+                fold_indices={}
+                high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
+                for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
+                    fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
+                #exit()
 
-            train_indices=fold_indices[config.fold][0]
-            val_indices=fold_indices[config.fold][1]
+                train_indices=fold_indices[config.fold][0]
+                val_indices=fold_indices[config.fold][1]
+            else: #do random kfold
+                kfold=KFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+                fold_indices={}
+                for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices)):
+                    fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
+                #exit()
+
+                train_indices=fold_indices[config.fold][0]
+                val_indices=fold_indices[config.fold][1]
+
 
 
 
