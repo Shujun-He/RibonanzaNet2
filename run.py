@@ -124,11 +124,11 @@ val_criterion=torch.nn.CrossEntropyLoss(reduction='none')
 cos_epoch=int(config.epochs*0.75)-1
 lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,(config.epochs-cos_epoch)*len(train_loader)//config.gradient_accumulation_steps)
 
-# warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
-#                                     total_steps=len(train_loader),
-#                                     final_lr=config.learning_rate)
+warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
+                                    total_steps=config.warmup_steps*accelerator.num_processes,
+                                    final_lr=config.learning_rate)
 #exit()
-optimizer, train_loader, val_loader, lr_schedule= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule)
+optimizer, train_loader, val_loader, lr_schedule, warmup_schduler= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule, warmup_schduler)
 
 @torch.compile(fullgraph=False)
 def optimizer_step():
@@ -209,6 +209,8 @@ for epoch in range(config.epochs):
                 lr_schedule.step()
             # elif epoch == 0:
             #     warmup_schduler.step()
+            if total_steps < config.warmup_steps:
+                warmup_schduler.step()
 
         if total_steps % config.log_interval == 0:
             accelerator.save_state(f"models/step_{total_steps}",safe_serialization=False)

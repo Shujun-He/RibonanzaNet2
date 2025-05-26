@@ -1,6 +1,6 @@
 # Model hyperparameters
 learning_rate: 0.001 # The learning rate for the optimizer
-batch_size: 4        # Number of samples per batch
+batch_size: 8        # Number of samples per batch
 test_batch_size: 8        # Number of samples per batch
 epochs: 10            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
@@ -28,6 +28,7 @@ max_len: 177
 max_seq: 128
 log_interval: 2000
 use_gradient_checkpoint: true
+warmup_steps: 200
 
 #Data scaling
 use_data_percentage: 1
