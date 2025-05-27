@@ -251,7 +251,8 @@ class Trainer:
     def run_training(self):
         self.train_state.model.fast.train()
         for batch in self.training_data_loader:
-            print(batch["SN"])
+            # print(batch["SN"])
+            start = time.time()
             train_step(
                 train_state=self.train_state,
                 batch=batch,
@@ -261,7 +262,9 @@ class Trainer:
                 ),
             )
             print(
-                f"performed step={int(self.train_state.step)} loss={float(self.train_state.metrics.loss.compute())}"
+                f"performed step={int(self.train_state.step)} "
+                f"loss={float(self.train_state.metrics.loss.compute())} "
+                f"took={time.time() - start:.4f} seconds"
             )
             self.save_checkpoint()
             if (self.train_state.step % self.batches_per_epoch) == 0:

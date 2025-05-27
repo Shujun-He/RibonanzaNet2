@@ -19,7 +19,7 @@ def load_torch_model_into_jax(torch_model_path: str, jax_state):
 
     for k in jax_flat_state:
         jax_shape = jax_flat_state[k].value.shape
-        value = torch_state[k].numpy()
+        value = torch_state[k].cpu().numpy()
         if len(jax_shape) == 2 and k != "encoder.weight":
             value = value.transpose()
         jax_flat_state[k].value = value

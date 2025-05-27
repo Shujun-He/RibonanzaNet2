@@ -27,16 +27,16 @@ previous_model_path: "none"
 use_noise_aug: false
 
 #Data scaling
-use_data_percentage: 0.1
+use_data_percentage: 0.0001
 use_dirty_data: true # turn off for data scaling and data dropout experiments
 
 
 # Other configurations
 fold: 0
 nfolds: 6
-input_dir: "../../input/"
+input_dir: "./input/"
 gpu_id: "0"
 
 # data files
 hdf_files:
-  - /lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5
+  - ./input/OneMil.v0.1.0.hdf5
