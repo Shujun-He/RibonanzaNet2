@@ -404,9 +404,9 @@ class TriangleMultiplicativeModule(nn.Module):
             nn.init.constant_(gate.bias, 1.)
 
         if mix == 'outgoing':
-            self.mix_einsum_eq = '... i k d, ... j k d -> ... i j d'
+            self.left_p, self.right_p = (0, 3, 1, 2), (0, 3, 2, 1)
         elif mix == 'ingoing':
-            self.mix_einsum_eq = '... k i d, ... k j d -> ... i j d'
+            self.left_p, self.right_p = (0, 3, 2, 1), (0, 3, 1, 2)
 
         self.to_out_norm = nn.LayerNorm(hidden_dim)
         self.to_out = nn.Linear(hidden_dim, dim)
@@ -441,14 +441,14 @@ class TriangleMultiplicativeModule(nn.Module):
             right_gate = self.right_gate(x).sigmoid()
             out_gate = self.out_gate(x).sigmoid()
 
-            left = left * left_gate
-            right = right * right_gate
+            left = left.permute(self.left_p) * left_gate.permute(self.left_p)
+            right = right.permute(self.right_p) * right_gate.permute(self.right_p)
 
         with record_function("ribonanza::tmm::einsum"):
-            out = einsum(self.mix_einsum_eq, left, right)
+            out = torch.matmul(left, right)
 
         with record_function("ribonanza::tmm::final_norm"):
-            out = self.to_out_norm(out)
+            out = self.to_out_norm(out.permute((0, 2, 3, 1)))
             out = out * out_gate
         return self.to_out(out)
 
