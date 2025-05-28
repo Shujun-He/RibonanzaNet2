@@ -1,18 +1,12 @@
 # RibonanzaNet
 
-Training code for RibonanzaNet. 
+Training code for RibonanzaNet that uses Ribonanza1 onemill dataset. 
 
-# Example notebooks
 
-You may not want to retrain RibonanzaNet from scratch and rather just use pretrained checkpoints, so we have created example notebooks: \
-finetune: https://www.kaggle.com/code/shujun717/ribonanzanet-2d-structure-finetune \
-secondary structure inference: https://www.kaggle.com/code/shujun717/ribonanzanet-2d-structure-inference \
-chemical mapping inference: https://www.kaggle.com/code/shujun717/ribonanzanet-inference
 
 ## Data Download
 
-You just need ```train_data.csv```, ```test_sequences.csv```, and ```sample_submission.csv``` from 
-https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/data
+You just need an hdf5 file that is public available on kaggle and can be downloaded using the kaggle API: https://www.kaggle.com/datasets/shujun717/ribonanza1-onemill-hdf5
 
 ## Environment
 
@@ -33,17 +27,11 @@ pip install -e .
 ## How to run
 First activate environment ```conda activate torch```
 
-Set up accelerate with ```accelerate config``` in the terminal or with ```--config_path``` option
-
-For an example of a accelerate config file, see ```accelerate_config.yaml```
+generate scripts with ```generate_multinode_configs.sh```. You will need to set ```--n_nodes --n_gpus_per_node --master_node```. This script works for single node training as well. For single process training, ```python run.py --config_path configs/10M.yaml``` will work.
 
 
-### Data processing
-
-run ```process_data.py```. for now the default data path is set to ```/lustre/fs0/scratch/shared/Ribonanza2A_Genscript.v0.1.0.hdf5```, which is the new data containing chemical mapping for 8 sequences sequences. Note that for training, we only use sequences that have SNR>1 which amounts to 3.6 million
-
-
-### Training
+### Single node training
+first setup accelerate config with ```accelerate config```
 ```accelerate launch run.py --config_path configs/pairwise.yaml```
 
 
@@ -56,11 +44,9 @@ You can generate scripts with ```generate_multinode_configs.sh``` which has
  and then ```launch_all.sh``` to launch distributed processes
 
 
-### Inference
-```accelerate launch inference.py --config_path configs/pairwise.yaml```
+## Outputs
 
-### Process raw prediction into submission file for Ribonanza
-```python make_submission.py --config_path configs/pairwise.yaml```
+The code will generate a log file in ```logs/fold0.csv``` and model weights will be saved to ```models``` folder. It will also generate a ```run_stats.json``` that records total runtime
 
 
 ## Configuration File
@@ -135,6 +121,10 @@ This section explains the various parameters and settings in the configuration f
 
 - `gpu_id`: "0"  
   Identifier for the GPU used for training. Useful in single-GPU setup.
+
+- `hdf_files`: "/lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5"  
+  path to the data
+
 
 ---
 
