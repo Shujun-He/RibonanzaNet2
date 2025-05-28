@@ -2,6 +2,7 @@ import os
 
 import numpy as np
 import grain
+import grain.sharding
 import h5py
 
 
@@ -168,6 +169,7 @@ def make_data_loader(
     max_len: int,
     batch_size: int,
     shuffle: bool,
+    shard_options: grain.sharding.ShardOptions,
     seed: int = 0,
     epochs: int | None = None,
 ):
@@ -194,8 +196,8 @@ def make_data_loader(
         num_epochs=epochs,
         shuffle=shuffle,
         seed=0,
-        shard_options=grain.sharding.NoSharding(),
         transformations=transformations,
         batch_size=batch_size,
         worker_count=num_workers,
+        shard_options=shard_options,
     )

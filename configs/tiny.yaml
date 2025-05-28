@@ -1,7 +1,7 @@
 # Model hyperparameters
 learning_rate: 0.01 # The learning rate for the optimizer
-batch_size: 1        # Number of samples per batch
-test_batch_size: 1        # Number of samples per batch
+batch_size: 2        # Number of samples per batch
+test_batch_size: 2        # Number of samples per batch
 epochs: 1            # Total training epochs
 #optimizer: "ranger"       # Optimization algorithm
 dropout: 0 #0.1     # Dropout regularization rate
@@ -10,6 +10,7 @@ weight_initialization_seed: 0
 save_initial_state: true
 mixed_precision: "bf16"
 mixed_precision_policy: "compute=bfloat16,params=float32,output=bfloat16"
+checkpoint_directory: "/tmp/checkpoints"
 
 weight_decay: 0.0001
 k: 5 #not used
