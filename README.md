@@ -134,7 +134,7 @@ This section explains the various parameters and settings in the configuration f
 ```models``` has model weights and optimizer states,
 ```oofs``` has the val predictions
 
-## Finetning for secondary structure
+## Finetuning for secondary structure
 
 the script to use is `finetune_temporal_split.py` which has the following command line args  
  
