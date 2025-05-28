@@ -136,16 +136,16 @@ This section explains the various parameters and settings in the configuration f
 
 ## Finetning for secondary structure
 
-the script to use is `finetune_temporal_split.py` which ash the following command line args
+the script to use is `finetune_temporal_split.py` which has the following command line args  
+ 
+`config`: finetuning hyperparameter yaml file    
+`rnet_config`: RibonanzaNet pretraining config   
+`train_test_data`: path to train test data (parquet file) (uploaded to `/finetuning_data/pdb_ss_data_w_pub_dates.parquet`)  
+`casp15_data`: path to casp15 RNA SS data (uploaded to `/finetuning_data/casp15.csv`)  
 
-`config`: finetuning hyperparameter yaml file 
-`rnet_config`: RibonanzaNet pretraining config 
-`train_test_data`: path to train test data (parquet file) (uploaded to `/finetuning_data/pdb_ss_data_w_pub_dates.parquet`)
-`casp15_data`: path to casp15 RNA SS data (uploaded to `/finetuning_data/casp15.csv`)
-
-to generate grid search configs (216 in total) use `generate_finetune_configs.py`  
-then if you have slurm `bash launch_finetune.sh` otherwise you have to manage these tasks given your hardware  
-next, to compile statistics from top 25% best hyperparamters (selected based on val), use `compile_grid_search_v2.py`
+To generate grid search configs (216 in total) use `generate_finetune_configs.py`.
+Then if you have slurm `bash launch_finetune.sh` otherwise you have to manage these tasks given your hardware  
+Next, to compile statistics from top 25% best hyperparamters (selected based on val), use `compile_grid_search_v2.py`
 
 
 
