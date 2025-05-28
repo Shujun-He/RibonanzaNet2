@@ -24,8 +24,28 @@ parser.add_argument(
     "--config",
     type=str,
     required=True,
-    help="Path to the YAML configuration file."
+    help="Path to the finetuning YAML configuration file."
 )
+parser.add_argument(
+    "--rnet_config",
+    type=str,
+    required=True,
+    help="Path to the Rnet YAML configuration file."
+)
+parser.add_argument(
+    "--train_test_data",
+    type=str,
+    required=True,
+    help="Path to the Rnet YAML configuration file."
+)
+parser.add_argument(
+    "--casp15_data",
+    type=str,
+    required=True,
+    help="Path to the Rnet YAML configuration file."
+)
+
+
 
 args = parser.parse_args()
 
@@ -34,7 +54,8 @@ with open(args.config, "r") as file:
 # In[2]:
 
 
-data=pd.read_parquet("../david_NAKB_dec/pdb_ss_data_w_pub_dates.parquet")
+#data=pd.read_parquet("../david_NAKB_dec/pdb_ss_data_w_pub_dates.parquet")
+data=pd.read_parquet(args.train_test_data)
 # #data=data.loc[data['length']<400].reset_index(drop=True)
 data=data.drop_duplicates('dbn')
 data=data.drop_duplicates('RNA_sequence')
@@ -243,8 +264,12 @@ class finetuned_RibonanzaNet(RibonanzaNet):
 from sklearn.metrics import f1_score
 import os
 
+#write to dummy arnie file
+
+
+
 # Set the environment variable
-os.environ['ARNIEFILE'] = '../arnie_file.txt'
+os.environ['ARNIEFILE'] = 'arnie_file.txt'
 
 # To check if the variable was set correctly, you can print it
 print(os.environ['ARNIEFILE'])
@@ -293,7 +318,7 @@ def tune_val_f1(val_preds):
 
 
 from tqdm import tqdm
-model=finetuned_RibonanzaNet(load_config_from_yaml("configs/pairwise.yaml"),pretrained=True).cuda()
+model=finetuned_RibonanzaNet(load_config_from_yaml(args.rnet_config),pretrained=True).cuda()
 #https://github.com/prigoyal/pytorch_memonger/blob/master/tutorial/Checkpointing_for_PyTorch_models.ipynb
 
 # Load hyperparameters from the finetune_config dict
@@ -561,7 +586,7 @@ test_data.to_parquet(f"test_results/{prefix}_finetuned_test.parquet",index=False
 # In[22]:
 
 # test casp15
-casp_data=pd.read_csv("../casp15.csv")
+casp_data=pd.read_csv(args.casp15_data)
 #casp_data.loc[2,'sequence']=casp_data.loc[2,'sequence'].replace('&','A')
 casp_data['pairs']=[[] for _ in range(len(casp_data))]
 casp_data['RNA_sequence']=casp_data['sequence']
@@ -675,7 +700,8 @@ casp_data.to_csv(f"test_results/{prefix}_casp15_ribonanzanet.csv",index=False)
 
 
 
-# test casp16
+# test casp16 skip for now because it's private
+exit()
 casp16_data=pd.read_parquet("../../CASP16_SS_all_compiled.parquet")[['ID','structure']]
 casp16_targets=pd.read_csv("../../3bead_model/casp16_sequences.csv").rename(columns={'sequence_id':'ID'})
 casp16_targets=casp16_targets.merge(casp16_data,how='left',on='ID')
