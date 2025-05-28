@@ -24,25 +24,25 @@ parser.add_argument(
     "--config",
     type=str,
     required=True,
-    help="Path to the finetuning YAML configuration file."
+    help="finetuning hyperparameter yaml file"
 )
 parser.add_argument(
     "--rnet_config",
     type=str,
     required=True,
-    help="Path to the Rnet YAML configuration file."
+    help="RibonanzaNet pretraining config"
 )
 parser.add_argument(
     "--train_test_data",
     type=str,
     required=True,
-    help="Path to the Rnet YAML configuration file."
+    help="path to train test data (parquet file)"
 )
 parser.add_argument(
     "--casp15_data",
     type=str,
     required=True,
-    help="Path to the Rnet YAML configuration file."
+    help="path to casp15 RNA SS data"
 )
 
 

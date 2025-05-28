@@ -134,5 +134,5 @@ process_and_plot(
     score_file_pattern="grid_search_scores/config_{}.yaml.txt",
     csv_pattern="test_results/config_{}.yaml_casp15_ribonanzanet.csv",
     parquet_pattern="test_results/config_{}.yaml_finetuned_test.parquet",
-    additional_csv_pattern="test_results/config_{}.yaml_casp16_ribonanzanet.csv"
+    #additional_csv_pattern="test_results/config_{}.yaml_casp16_ribonanzanet.csv"
 )
