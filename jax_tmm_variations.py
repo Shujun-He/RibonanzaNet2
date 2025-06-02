@@ -1,5 +1,6 @@
 from typing import Literal, Callable
 from time import time
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -395,6 +396,109 @@ class TriangleMultiplicativeModuleDotOptimized(nnx.Module):
 
 
 
+class TriangleMultiplicativeModuleLocal(nnx.Module):
+    """vmap-based matmul with local dot products."""
+    def __init__(
+        self,
+        *,
+        dim: int,
+        hidden_dim: int | None = None,
+        window_size: int = 4,
+        mix: Literal["ingoing", "outgoing"] = "ingoing",
+    ):
+        assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
+        rngs = Rngs(0)  # Use a fixed RNG for reproducibility
+
+        hidden_dim = hidden_dim if hidden_dim is not None else dim
+        self.norm = nnx.LayerNorm(dim, rngs=rngs)
+
+        self.left_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        self.left_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.out_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        # Note: both of these are equivalent to a simple matmul, but will serve as
+        # a blueprint for a local update later
+        if mix == "outgoing":
+            def _my_matmul(
+                a: jnp.ndarray,
+                b: jnp.ndarray,
+            ) -> jnp.ndarray:
+                # This is a little bit slower then "ingoing" because of different memory access patterns
+                _local_dot = partial(self._local_dot, window_size=window_size)
+                mv = jax.vmap(_local_dot, (0, None, 0), 0)
+                mm = jax.vmap(mv, (None, 0, None), 1)
+                return mm(a, b, jnp.arange(a.shape[0], dtype=jnp.int32))
+        elif mix == "ingoing":
+            def _my_matmul(
+                a: jnp.ndarray,
+                b: jnp.ndarray,
+            ) -> jnp.ndarray:
+                # This is fast because it accesses memory of a and b contiguously
+                mv = jax.vmap(jnp.vdot, (1, None), 0)
+                mm = jax.vmap(mv, (None, 1), 1)
+                return mm(a, b)
+        self.batched_matmul = jax.vmap(
+            jax.vmap(
+                _my_matmul,
+                in_axes=(2, 2),
+                out_axes=2,
+            ),
+            in_axes=(0, 0),
+            out_axes=0,
+        )
+
+        self.to_out_norm = nnx.LayerNorm(hidden_dim, rngs=rngs)
+        self.to_out = nnx.Linear(hidden_dim, dim, rngs=rngs)
+
+    @staticmethod
+    def _local_dot(
+        x: jnp.ndarray,
+        y: jnp.ndarray,
+        i: int,
+        window_size: int
+    ) -> jnp.ndarray:
+        ws = 2 * window_size + 1
+        return jnp.vdot(
+            jax.lax.dynamic_slice(jnp.pad(x, window_size, mode="constant", constant_values=0.0), (i,), (ws,)),
+            jax.lax.dynamic_slice(jnp.pad(y, window_size, mode="constant", constant_values=0.0), (i,), (ws,))
+        )
+
+
+    def __call__(self, x: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
+        src_mask = src_mask.astype(jnp.float32)
+        src_mask = jnp.expand_dims(src_mask, axis=-1)
+        # (B, L, 1) * (B, 1, L) -> (B, L, L)
+        mask = jnp.matmul(src_mask, src_mask.transpose((0, 2, 1)))
+        mask = jnp.expand_dims(mask, axis=-1)
+
+        assert x.shape[1] == x.shape[2], "feature map must be symmetrical"
+
+        x = self.norm(x)
+
+        left = self.left_proj(x)
+        right = self.right_proj(x)
+
+        left = left * mask
+        right = right * mask
+
+        left_gate = jax.nn.sigmoid(self.left_gate(x))
+        right_gate = jax.nn.sigmoid(self.right_gate(x))
+
+        out_gate = jax.nn.sigmoid(self.out_gate(x))
+
+        left = left * left_gate
+        right = right * right_gate
+
+        out = self.batched_matmul(left, right)
+
+        out = self.to_out_norm(out)
+        out = out * out_gate
+        return self.to_out(out)
+
+
 if __name__ == "__main__":
     SHAPE = (8, 177, 177, 128)  # (Batch size, Sequence length, Feature dimension)
     IN_OR_OUT = "outgoing"
@@ -426,3 +530,9 @@ if __name__ == "__main__":
     print("\nDot product-based matmul (optimized)")
     dot_optimized = TriangleMultiplicativeModuleDotOptimized(dim=SHAPE[3], mix=IN_OR_OUT)
     benchmark(dot_optimized, x, mask, expected, n=N)
+
+    print("\nLocal dot product-based matmul")
+    # local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=SHAPE[1])
+    # benchmark(local, x, mask, expected, n=N)  # to verify correctness
+    local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=4)
+    benchmark(local, x, mask, expected, n=N, rtol=1e8, atol=1e8)
