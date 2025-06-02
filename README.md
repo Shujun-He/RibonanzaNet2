@@ -148,5 +148,122 @@ Then if you have slurm `bash launch_finetune.sh` otherwise you have to manage th
 Next, to compile statistics from top 25% best hyperparamters (selected based on val), use `compile_grid_search_v2.py`
 
 
+## Finetuning for C1' contact prediction
 
+
+### data processing
+
+
+C1_contact/  
+├── train_sequences_clustered.pkl  
+├── validation_sequences_clustered.pkl  
+├── test_sequences_clustered_2019.pkl  
+├── test_sequences_clustered_2020.pkl  
+├── ...
+
+
+#### 1. Requirements
+
+- Python 3.7+
+- `pandas`
+- CD-HIT (compiled and executable from the command line)
+
+#### 2. Input
+
+The script expects a `train_data.pkl` file containing a dictionary with:
+
+- `sequence`: list of RNA/protein sequences
+- `temporal_cutoff`: year strings (e.g., `"2017-01-01"`)
+- `description`: PDB or sequence identifiers
+- `all_sequences`: (optional, preserved)
+- `xyz`: 3D coordinates (preserved for downstream use)
+
+#### 3. Run the Script
+
+Update the CD-HIT executable path in the script:
+
+```python
+cdhit_executable = "../../cdhit/cd-hit"  # Adjust path as needed
+````
+
+Then execute the script:
+
+```bash
+python run_preprocessing.py
+```
+
+
+### ⚙️ Processing Steps
+
+1. **Temporal Split**
+    
+    - **Train**: Sequences from before 2018
+        
+    - **Validation**: Sequences from 2018–2019
+        
+    - **Test**: Yearly sets from 2019 to 2024
+        
+2. **Clustering with CD-HIT**
+    
+    - CD-HIT clusters sequences using an identity threshold of 0.8
+        
+    - Output cluster assignments are stored as a new `cluster` column in each DataFrame
+        
+3. **Saving Outputs**
+    
+    All processed subsets are saved under the `C1_contact/` directory as `.pkl` files for downstream model finetuning.
+    
+
+
+###  finetuning script
+
+
+#### 🧪 C1-Contact Finetuning Script Description
+
+This script performs finetuning of a pretrained `RibonanzaNet` model to predict **C1 contact maps** for RNA sequences. The workflow includes:
+
+- **Loading clustered sequence data** (from CD-HIT clustering),
+    
+- **Filtering sequences by length**,
+    
+- **Constructing pairwise C1 contact maps** from atomic coordinates,
+    
+- **Training a pairwise prediction head** on top of a pretrained embedding model,
+    
+- **Hyperparameter tuning** using F1 score optimization over a validation set,
+    
+- **Evaluating model performance** on temporally-split yearly test sets from 2019–2024,
+    
+- **Saving best model weights and test results** per hyperparameter setting.
+    
+
+The script supports YAML-based configuration and optional debugging mode. It saves results and model checkpoints in the following directories:
+
+- `c1_contact_grid_search_weights/`: best model weights per config
+    
+- `c1_contact_grid_search_scores/`: best validation F1 scores
+    
+- `c1_contact_grid_search_results/`: per-year test set F1 scores
+    
+
+Run this script using:
+
+```bash
+python finetune_c1_contact.py --config configs/your_config.yaml --max_len 1024
+```
+
+Enable debug mode for faster iteration:
+
+```bash
+python finetune_c1_contact.py --config configs/your_config.yaml --debug
+```
+
+---
+
+### example contact maps
+
+use default cutoff of 15A
+looks ok but looks like adjacent nts in helices are also considered in contact 
+maybe try adjusting cutoff
+alternatively it may be better to directly predict raw distances and compute contact F1s at different thresholds
 
