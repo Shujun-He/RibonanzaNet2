@@ -265,6 +265,7 @@ python finetune_c1_contact.py --config configs/your_config.yaml --debug
 ### example contact maps
 
 use default cutoff of 15A
+see folder `c1_contact_examples/`
 looks ok but looks like adjacent nts in helices are also considered in contact 
 maybe try adjusting cutoff
 alternatively it may be better to directly predict raw distances and compute contact F1s at different thresholds
