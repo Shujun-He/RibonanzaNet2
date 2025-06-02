@@ -419,14 +419,31 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
         self.right_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
         self.out_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
 
+
+        # Local dot product function
+        # Note: if .at[idx].get(mode="fill", fill_value=0.0) is used, the call will
+        # be lowered to XLA's scatter operation, which is considerably slower
+        def _local_dot(
+            x: jnp.ndarray,
+            y: jnp.ndarray,
+            i: jnp.ndarray,
+            window_size: int
+        ) -> jnp.ndarray:
+            ws = 2 * window_size + 1
+            return jnp.vdot(
+                jax.lax.dynamic_slice(jnp.pad(x, window_size, mode="constant", constant_values=0.0), (i,), (ws,)),
+                jax.lax.dynamic_slice(jnp.pad(y, window_size, mode="constant", constant_values=0.0), (i,), (ws,))
+            )
+
+
         if mix == "outgoing":
             def _my_matmul(
                 a: jnp.ndarray,
                 b: jnp.ndarray,
             ) -> jnp.ndarray:
                 # This is a little bit slower then "ingoing" because of different memory access patterns
-                _local_dot = partial(self._local_dot, window_size=window_size)
-                mv = jax.vmap(_local_dot, (0, None, 0), 0)
+                vv = partial(_local_dot, window_size=window_size)
+                mv = jax.vmap(vv, (0, None, 0), 0)
                 mm = jax.vmap(mv, (None, 0, None), 1)
                 return mm(a, b, jnp.arange(a.shape[0], dtype=jnp.int32))
         elif mix == "ingoing":
@@ -435,8 +452,8 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
                 b: jnp.ndarray,
             ) -> jnp.ndarray:
                 # This is fast because it accesses memory of a and b contiguously
-                _local_dot = partial(self._local_dot, window_size=window_size)
-                mv = jax.vmap(_local_dot, (1, None, 0), 0)
+                vv = partial(_local_dot, window_size=window_size)
+                mv = jax.vmap(vv, (1, None, 0), 0)
                 mm = jax.vmap(mv, (None, 1, None), 1)
                 return mm(a, b, jnp.arange(a.shape[0], dtype=jnp.int32))
         self.batched_matmul = jax.vmap(
@@ -451,19 +468,6 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
 
         self.to_out_norm = nnx.LayerNorm(hidden_dim, rngs=rngs)
         self.to_out = nnx.Linear(hidden_dim, dim, rngs=rngs)
-
-    @staticmethod
-    def _local_dot(
-        x: jnp.ndarray,
-        y: jnp.ndarray,
-        i: jnp.ndarray,
-        window_size: int
-    ) -> jnp.ndarray:
-        ws = 2 * window_size + 1
-        return jnp.vdot(
-            jax.lax.dynamic_slice(jnp.pad(x, window_size, mode="constant", constant_values=0.0), (i,), (ws,)),
-            jax.lax.dynamic_slice(jnp.pad(y, window_size, mode="constant", constant_values=0.0), (i,), (ws,))
-        )
 
 
     def __call__(self, x: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
