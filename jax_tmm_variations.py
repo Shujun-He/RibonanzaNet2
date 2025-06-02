@@ -419,8 +419,6 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
         self.right_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
         self.out_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
 
-        # Note: both of these are equivalent to a simple matmul, but will serve as
-        # a blueprint for a local update later
         if mix == "outgoing":
             def _my_matmul(
                 a: jnp.ndarray,
@@ -437,9 +435,10 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
                 b: jnp.ndarray,
             ) -> jnp.ndarray:
                 # This is fast because it accesses memory of a and b contiguously
-                mv = jax.vmap(jnp.vdot, (1, None), 0)
-                mm = jax.vmap(mv, (None, 1), 1)
-                return mm(a, b)
+                _local_dot = partial(self._local_dot, window_size=window_size)
+                mv = jax.vmap(_local_dot, (1, None, 0), 0)
+                mm = jax.vmap(mv, (None, 1, None), 1)
+                return mm(a, b, jnp.arange(a.shape[0], dtype=jnp.int32))
         self.batched_matmul = jax.vmap(
             jax.vmap(
                 _my_matmul,
@@ -457,7 +456,7 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
     def _local_dot(
         x: jnp.ndarray,
         y: jnp.ndarray,
-        i: int,
+        i: jnp.ndarray,
         window_size: int
     ) -> jnp.ndarray:
         ws = 2 * window_size + 1
