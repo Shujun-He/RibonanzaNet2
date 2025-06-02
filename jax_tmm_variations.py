@@ -499,6 +499,77 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
         return self.to_out(out)
 
 
+class TriangleMultiplicativeModuleTrivial(nnx.Module):
+    """element-wise multiplication as lower bound for performance."""
+    def __init__(
+        self,
+        *,
+        dim: int,
+        hidden_dim: int | None = None,
+        mix: Literal["ingoing", "outgoing"] = "ingoing",
+    ):
+        assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
+        rngs = Rngs(0)  # Use a fixed RNG for reproducibility
+
+        hidden_dim = hidden_dim if hidden_dim is not None else dim
+        self.norm = nnx.LayerNorm(dim, rngs=rngs)
+
+        self.left_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        self.left_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.out_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        self.to_out_norm = nnx.LayerNorm(hidden_dim, rngs=rngs)
+        self.to_out = nnx.Linear(hidden_dim, dim, rngs=rngs)
+
+    @staticmethod
+    def _local_dot(
+        x: jnp.ndarray,
+        y: jnp.ndarray,
+        i: int,
+        window_size: int
+    ) -> jnp.ndarray:
+        ws = 2 * window_size + 1
+        return jnp.vdot(
+            jax.lax.dynamic_slice(jnp.pad(x, window_size, mode="constant", constant_values=0.0), (i,), (ws,)),
+            jax.lax.dynamic_slice(jnp.pad(y, window_size, mode="constant", constant_values=0.0), (i,), (ws,))
+        )
+
+
+    def __call__(self, x: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
+        src_mask = src_mask.astype(jnp.float32)
+        src_mask = jnp.expand_dims(src_mask, axis=-1)
+        # (B, L, 1) * (B, 1, L) -> (B, L, L)
+        mask = jnp.matmul(src_mask, src_mask.transpose((0, 2, 1)))
+        mask = jnp.expand_dims(mask, axis=-1)
+
+        assert x.shape[1] == x.shape[2], "feature map must be symmetrical"
+
+        x = self.norm(x)
+
+        left = self.left_proj(x)
+        right = self.right_proj(x)
+
+        left = left * mask
+        right = right * mask
+
+        left_gate = jax.nn.sigmoid(self.left_gate(x))
+        right_gate = jax.nn.sigmoid(self.right_gate(x))
+
+        out_gate = jax.nn.sigmoid(self.out_gate(x))
+
+        left = left * left_gate
+        right = right * right_gate
+
+        out = left * right
+
+        out = self.to_out_norm(out)
+        out = out * out_gate
+        return self.to_out(out)
+
+
 if __name__ == "__main__":
     SHAPE = (8, 177, 177, 128)  # (Batch size, Sequence length, Feature dimension)
     IN_OR_OUT = "outgoing"
@@ -519,20 +590,24 @@ if __name__ == "__main__":
     matmul = TriangleMultiplicativeModuleMatmul(dim=SHAPE[3], mix=IN_OR_OUT)
     benchmark(matmul, x, mask, expected, n=N)
 
-    print("\nOptimized Transpose + Matmul")
-    optimized = TriangleMultiplicativeModuleOptimizedTranspose(dim=SHAPE[3], mix=IN_OR_OUT)
-    benchmark(optimized, x, mask, expected, n=N)
+    # print("\nOptimized Transpose + Matmul")
+    # optimized = TriangleMultiplicativeModuleOptimizedTranspose(dim=SHAPE[3], mix=IN_OR_OUT)
+    # benchmark(optimized, x, mask, expected, n=N)
 
-    print("\nDot product-based matmul")
-    dot = TriangleMultiplicativeModuleDot(dim=SHAPE[3], mix=IN_OR_OUT)
-    benchmark(dot, x, mask, expected, n=N)
+    # print("\nDot product-based matmul")
+    # dot = TriangleMultiplicativeModuleDot(dim=SHAPE[3], mix=IN_OR_OUT)
+    # benchmark(dot, x, mask, expected, n=N)
 
-    print("\nDot product-based matmul (optimized)")
-    dot_optimized = TriangleMultiplicativeModuleDotOptimized(dim=SHAPE[3], mix=IN_OR_OUT)
-    benchmark(dot_optimized, x, mask, expected, n=N)
+    # print("\nDot product-based matmul (optimized)")
+    # dot_optimized = TriangleMultiplicativeModuleDotOptimized(dim=SHAPE[3], mix=IN_OR_OUT)
+    # benchmark(dot_optimized, x, mask, expected, n=N)
 
     print("\nLocal dot product-based matmul")
     # local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=SHAPE[1])
     # benchmark(local, x, mask, expected, n=N)  # to verify correctness
     local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=4)
     benchmark(local, x, mask, expected, n=N, rtol=1e8, atol=1e8)
+
+    print("\nTrivial element-wise multiplication")
+    trivial = TriangleMultiplicativeModuleTrivial(dim=SHAPE[3], mix=IN_OR_OUT)
+    benchmark(trivial, x, mask, expected, n=N, rtol=1e8, atol=1e8)
