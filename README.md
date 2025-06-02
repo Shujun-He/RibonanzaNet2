@@ -170,7 +170,9 @@ C1_contact/
 
 #### 2. Input
 
-The script expects a `train_data.pkl` file containing a dictionary with:
+First generate `train_data.pkl` with `preprocess_data.py` which requires Stanford3D folding data at https://www.kaggle.com/competitions/stanford-rna-3d-folding/data
+
+The `make_C1_contact.py` script expects a `train_data.pkl` file containing a dictionary with:
 
 - `sequence`: list of RNA/protein sequences
 - `temporal_cutoff`: year strings (e.g., `"2017-01-01"`)
@@ -189,7 +191,7 @@ cdhit_executable = "../../cdhit/cd-hit"  # Adjust path as needed
 Then execute the script:
 
 ```bash
-python run_preprocessing.py
+python make_C1_contact.py
 ```
 
 
