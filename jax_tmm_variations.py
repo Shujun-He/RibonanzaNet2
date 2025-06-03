@@ -9,30 +9,58 @@ from flax.nnx.rnglib import Rngs
 from tqdm import trange
 
 
+def create_loss_fn(
+    func: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    expected: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    """Returns a loss function that computes the squared error between the output of func and expected."""
+    def loss(x: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+        result = func(x, mask)
+        return jnp.sum((result - expected) ** 2)
+    return loss
+
+
+def report_time(
+    run_times: list[float],
+    name: str,
+) -> None:
+    """Prints the average and standard deviation of the run times."""
+    jit_time = run_times[0] * 1000
+    times = jnp.array(run_times[1:]) * 1000
+    avg_time = jnp.mean(times)
+    std_time = jnp.std(times)
+    print(f"Execution time ({name}): {avg_time:.3f} ± {std_time:.3f} ms (JIT: {jit_time:.3f} ms)")
+
+
 def benchmark(
     func: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
     x: jnp.ndarray,
     mask: jnp.ndarray,
     expected: jnp.ndarray,
     n: int,
-    rtol: float = 1e-4,
     atol: float = 1e-4
 ):
-    times = []
-    func = jax.jit(func)
+    loss_fn = create_loss_fn(jax.jit(func), expected)
+
+    val_times = []
     for _ in trange(n):
         start = time()
-        result = func(x, mask).block_until_ready()
+        loss = loss_fn(x, mask).block_until_ready()
         end = time()
-        times.append(end - start)
-        if not jnp.allclose(result, expected, rtol=rtol, atol=atol):
+        val_times.append(end - start)
+        if not loss < atol:
             raise ValueError("Output does not match expected result.")
 
-    jit_time = times[0]
-    times = jnp.array(times[1:])
-    avg_time = jnp.mean(times)
-    std_time = jnp.std(times)
-    print(f"Execution time: {avg_time:.6f} ± {std_time:.6f} seconds (JIT: {jit_time:.6f} seconds)")
+    report_time(val_times, "values")
+
+    grad_times = []
+    for _ in trange(n):
+        start = time()
+        grad = jax.grad(loss_fn)(x, mask).block_until_ready()
+        end = time()
+        grad_times.append(end - start)
+
+    report_time(grad_times, "gradients")
 
 
 class TriangleMultiplicativeModuleOriginal(nnx.Module):
@@ -609,8 +637,8 @@ if __name__ == "__main__":
     # local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=SHAPE[1])
     # benchmark(local, x, mask, expected, n=N)  # to verify correctness
     local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=4)
-    benchmark(local, x, mask, expected, n=N, rtol=1e8, atol=1e8)
+    benchmark(local, x, mask, expected, n=N, atol=1e8)
 
     print("\nTrivial element-wise multiplication")
     trivial = TriangleMultiplicativeModuleTrivial(dim=SHAPE[3], mix=IN_OR_OUT)
-    benchmark(trivial, x, mask, expected, n=N, rtol=1e8, atol=1e8)
+    benchmark(trivial, x, mask, expected, n=N, atol=1e8)
