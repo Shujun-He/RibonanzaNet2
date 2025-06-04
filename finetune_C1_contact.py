@@ -73,7 +73,7 @@ def get_ct(bp,s):
         ct_matrix[b[0]-1,b[1]-1]=1
     return ct_matrix
 
-def get_c1_concat_map(xyz, cutoff=15.0):
+def get_c1_concat_map(xyz, cutoff=12.0):
     """
     Convert a 3D coordinate tensor to a C1 concatenation map.
     """
@@ -86,7 +86,7 @@ def get_c1_concat_map(xyz, cutoff=15.0):
 
     for i in range(num_atoms):
         for j in range(num_atoms):
-            if abs(i - j) < 4:  # Masking close contacts
+            if abs(i - j) < 5:  # Masking close contacts
                 c1_concat_map[i, j] = 0.0
     return c1_concat_map
 
