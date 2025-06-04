@@ -262,6 +262,12 @@ python finetune_c1_contact.py --config configs/your_config.yaml --debug
 
 ---
 
+### Plotting code
+Use `compile_grid_search_c1.py` 
+
+
+
+
 ### example contact maps
 
 use default cutoff of 15A  
@@ -270,3 +276,7 @@ looks ok but looks like adjacent nts in helices are also considered in contact
 maybe try adjusting cutoff  
 alternatively it may be better to directly predict raw distances and compute contact F1s at different thresholds  
 
+### To do
+
+calculate F1 at top 3L predictions instead
+mask |i-j| < 5 during F1 calculations (probabaly won't change F1 by much but is more correct)
