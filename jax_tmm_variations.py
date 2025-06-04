@@ -4,6 +4,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import jax.experimental.sparse as jsp
 import flax.nnx as nnx
 from flax.nnx.rnglib import Rngs
 from tqdm import trange
@@ -40,7 +41,7 @@ def benchmark(
     n: int,
     atol: float = 1e-4
 ):
-    loss_fn = create_loss_fn(jax.jit(func), expected)
+    loss_fn = create_loss_fn(nnx.jit(func), expected)
 
     val_times = []
     for _ in trange(n):
@@ -530,6 +531,102 @@ class TriangleMultiplicativeModuleLocal(nnx.Module):
         return self.to_out(out)
 
 
+class TriangleMultiplicativeModuleSparse(nnx.Module):
+    """local matmul with sparse matrices (experimental)."""
+    def __init__(
+        self,
+        *,
+        dim: int,
+        sequence_length: int,
+        hidden_dim: int | None = None,
+        window_size: int = 4,
+        mix: Literal["ingoing", "outgoing"] = "ingoing",
+    ):
+        assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
+        rngs = Rngs(0)  # Use a fixed RNG for reproducibility
+
+        hidden_dim = hidden_dim if hidden_dim is not None else dim
+        self.norm = nnx.LayerNorm(dim, rngs=rngs)
+
+        self.left_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_proj = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        self.left_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.right_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.out_gate = nnx.Linear(dim, hidden_dim, rngs=rngs)
+
+        mask = jnp.triu(jnp.ones((sequence_length, sequence_length), dtype=jnp.float32), k=window_size + 1).astype(bool)
+        mask = jnp.logical_not(jnp.logical_or(mask, mask.T))
+        rows, cols = jnp.nonzero(mask)
+        indices = jnp.stack((rows, cols), axis=-1)
+        row_ptr = jnp.cumsum(jnp.count_nonzero(mask, axis=1))
+        row_ptr = jnp.concatenate((jnp.array([0]), row_ptr))
+
+        if mix == "outgoing":
+            def _my_matmul(
+                a: jnp.ndarray,
+                b: jnp.ndarray,
+            ) -> jnp.ndarray:
+                data = a[rows, cols]
+                # Both COO and CSR have pretty much the same performance
+                # a_sparse = jsp.BCOO((data, indices), shape=a.shape, unique_indices=True, indices_sorted=True)
+                a_sparse = jsp.BCSR((data, rows, row_ptr), shape=a.shape, unique_indices=True, indices_sorted=True)
+                return a_sparse @ b.T
+        elif mix == "ingoing":
+            def _my_matmul(
+                a: jnp.ndarray,
+                b: jnp.ndarray,
+            ) -> jnp.ndarray:
+                data = a[cols, rows]  # = a.T[rows, cols]
+                # a_sparse = jsp.BCOO((data, indices), shape=a.shape, unique_indices=True, indices_sorted=True)
+                a_sparse = jsp.BCSR((data, cols, row_ptr), shape=a.shape, unique_indices=True, indices_sorted=True)
+                return a_sparse @ b
+        self.batched_matmul = jax.vmap(
+            jax.vmap(
+                _my_matmul,
+                in_axes=(2, 2),
+                out_axes=2,
+            ),
+            in_axes=(0, 0),
+            out_axes=0,
+        )
+
+        self.to_out_norm = nnx.LayerNorm(hidden_dim, rngs=rngs)
+        self.to_out = nnx.Linear(hidden_dim, dim, rngs=rngs)
+
+
+    def __call__(self, x: jnp.ndarray, src_mask: jnp.ndarray) -> jnp.ndarray:
+        src_mask = src_mask.astype(jnp.float32)
+        src_mask = jnp.expand_dims(src_mask, axis=-1)
+        # (B, L, 1) * (B, 1, L) -> (B, L, L)
+        mask = jnp.matmul(src_mask, src_mask.transpose((0, 2, 1)))
+        mask = jnp.expand_dims(mask, axis=-1)
+
+        assert x.shape[1] == x.shape[2], "feature map must be symmetrical"
+
+        x = self.norm(x)
+
+        left = self.left_proj(x)
+        right = self.right_proj(x)
+
+        left = left * mask
+        right = right * mask
+
+        left_gate = jax.nn.sigmoid(self.left_gate(x))
+        right_gate = jax.nn.sigmoid(self.right_gate(x))
+
+        out_gate = jax.nn.sigmoid(self.out_gate(x))
+
+        left = left * left_gate
+        right = right * right_gate
+
+        out = self.batched_matmul(left, right)
+
+        out = self.to_out_norm(out)
+        out = out * out_gate
+        return self.to_out(out)
+
+
 class TriangleMultiplicativeModuleTrivial(nnx.Module):
     """element-wise multiplication as lower bound for performance."""
     def __init__(
@@ -638,6 +735,12 @@ if __name__ == "__main__":
     # benchmark(local, x, mask, expected, n=N)  # to verify correctness
     local = TriangleMultiplicativeModuleLocal(dim=SHAPE[3], mix=IN_OR_OUT, window_size=4)
     benchmark(local, x, mask, expected, n=N, atol=1e8)
+
+    print("\nSparse matrix multiplication")
+    # trivial = TriangleMultiplicativeModuleSparse(dim=SHAPE[3], mix=IN_OR_OUT, window_size=SHAPE[1], sequence_length=SHAPE[1])
+    # benchmark(trivial, x, mask, expected, n=N)  # to verify correctness
+    sparse = TriangleMultiplicativeModuleSparse(dim=SHAPE[3], mix=IN_OR_OUT, window_size=4, sequence_length=SHAPE[1])
+    benchmark(sparse, x, mask, expected, n=N, atol=1e8)
 
     print("\nTrivial element-wise multiplication")
     trivial = TriangleMultiplicativeModuleTrivial(dim=SHAPE[3], mix=IN_OR_OUT)
