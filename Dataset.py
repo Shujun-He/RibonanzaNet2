@@ -4,86 +4,85 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-#import polars as pl
+import polars as pl
 #tokens='ACGU().BEHIMSX'
 
+def load_bpp(filename,seq_length=177):
+    matrix = [[0.0 for x in range(seq_length)] for y in range(seq_length)]
+ #   #matrix=0
+    # data processing
+  #  for line in open(filename):
+   #     line = line.strip()
+    #    if line == "":
+     #       break
+      #  i,j,prob = line.split()
+       # matrix[int(j)-1][int(i)-1] = float(prob)
+        #matrix[int(i)-1][int(j)-1] = float(prob)
 
+    matrix=np.array(matrix)
+
+    #ap=np.array(matrix).sum(0)
+    return matrix
 
 class RNADataset(Dataset):
-    def __init__(self,hdf_files,indices,train=True,flip=False,add_noise=False):
+    def __init__(self,indices,data_dict,k=5,train=True,flip=False):
 
-        self.hdf_files=hdf_files
         self.indices=indices
-        #self.k=k
+        self.data_dict=data_dict
+        self.k=k
         self.tokens={nt:i for i,nt in enumerate('ACGU')}
         self.tokens['P']=4
         self.train=train
         self.flip=flip
-        self.add_noise=add_noise
 
+
+
+    def generate_src_mask(self,L1,L2,k):
+        mask=np.ones((k,L2),dtype='int8')
+        for i in range(k):
+            mask[i,L1+i+1-k:]=0
+        return mask
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
 
-        hdf_file_index, index =self.indices[idx]
-        hdf_file=self.hdf_files[hdf_file_index]
+        idx=self.indices[idx]
 
-        sequence=hdf_file['sequences'][0,index].decode("utf-8")
-
-        sequence=[self.tokens[nt] for nt in sequence]
+        sequence=[self.tokens[nt] for nt in self.data_dict['sequences'][idx]]
         sequence=np.array(sequence)
-        # print(sequence)
-        # exit()
+
 
         seq_length=len(sequence)
 
-        #labels are in the order DMS, 2A3
-        #init labels to nan with Lx(2*len(self.hdf_files))
-        labels=np.full((seq_length,2*len(self.hdf_files)),np.nan)
-        labels_experiment=hdf_file['r_norm'][index,:seq_length][:]
-
-        
-        if self.train and self.add_noise:
-            #plt.plot(labels_experiment[:,0].clip(0,1),label='real')
-            error=hdf_file['r_norm_err'][index,:seq_length][:]
-            labels_experiment=labels_experiment+np.random.normal(0,1,error.shape)*error
-            #plt.plot(labels_experiment[:,0].clip(0,1),label='noised')
-        # plt.legend()
-        # plt.savefig(f'noised/{idx}.png')
-        # plt.close()
-        #exit()
-
-        labels[:,hdf_file_index*2:hdf_file_index*2+2]=labels_experiment
-
-        # print(labels)
-        # print(labels.shape)
+        #labels are in the order 2A3, DMS
+        labels=self.data_dict['labels'][idx][:seq_length].copy()
+        errors=self.data_dict['errors'][idx][:seq_length].copy()
 
 
         loss_mask = (labels==labels) #mask nan labels
-
+        #assert len(loss_mask)==
+       #loss_mask[seq_length:]=0 #mask padding tokens
 
 
         label_mask=labels!=labels
 
         labels[label_mask]=0
+        errors[errors!=errors]=0
 
         labels=labels.clip(0,1)
 
         sequence=torch.tensor(sequence).long()
         labels=torch.tensor(labels).float()
         loss_mask=torch.tensor(loss_mask).bool()
+        #mask=torch.tensor(self.src_masks[idx])
         mask=torch.ones(seq_length)
+        #mask=torch.tensor(mask)
+        errors=torch.tensor(errors).float()
 
-        SN=np.zeros(len(self.hdf_files)*2)
-        SN[hdf_file_index*2:hdf_file_index*2+2]=hdf_file['signal_to_noise'][index][:]
-        SN=torch.tensor(SN).float()
+        SN=torch.tensor(self.data_dict['SN'][idx]).float()
 
-        # print(SN.shape)
-        # print(SN)
-        # exit()
 
 
 
@@ -99,6 +98,7 @@ class RNADataset(Dataset):
               "labels":labels,
               "mask":mask,
               "loss_mask":loss_mask,
+              "errors":errors,
               "SN":SN,}
 
 
@@ -134,19 +134,15 @@ class TestRNAdataset(RNADataset):
 
 
 class Custom_Collate_Obj:
-    def __init__(self,max_len=None):
-        self.max_len=max_len
+
 
     def __call__(self,data):
         # 
         length=[]
         for i in range(len(data)):
             length.append(len(data[i]['sequence']))
-        if self.max_len>0:
-            max_len=self.max_len
-        else:
-            max_len=max(length)
-        #max_len=206
+        #max_len=max(length)
+        max_len=206
 
         sequence=[]
         labels=[]
@@ -171,6 +167,7 @@ class Custom_Collate_Obj:
             loss_masks.append(F.pad(data[i]['loss_mask'],(0,0,0,to_pad),value=0))
             #print(data[i]['labels'].shape)
             labels.append(F.pad(data[i]['labels'],(0,0,0,to_pad),value=0))
+            errors.append(F.pad(data[i]['errors'],(0,0,0,to_pad),value=0))
             SN.append(data[i]['SN'])
             if use_bpp:
                 bpps.append(F.pad(data[i]['bpp'],(0,to_pad,0,to_pad),value=0))
@@ -180,6 +177,7 @@ class Custom_Collate_Obj:
         labels=torch.stack(labels)#.permute(0,2,1)
         masks=torch.stack(masks)
         loss_masks=torch.stack(loss_masks)#.permute(0,2,1)
+        errors=torch.stack(errors)#.permute(0,2,1)
         SN=torch.stack(SN)
         if use_bpp:
             bpps=torch.stack(bpps)
@@ -193,6 +191,7 @@ class Custom_Collate_Obj:
               "labels":labels,
               "masks":masks,
               "loss_masks":loss_masks,
+              "errors":errors,
               "SN":SN,
               "length":length}
 

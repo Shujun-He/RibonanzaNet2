@@ -497,8 +497,14 @@ class RibonanzaNet(nn.Module):
 
         attention_weights=[]
         for i,layer in enumerate(self.transformer_encoder):
-            src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
 
+            if return_aw:
+                src,aw=layer(src, pairwise_features, src_mask,return_aw=return_aw)
+                attention_weights.append(aw)
+            else:
+                src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
+
+            #print(src.shape)
         output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0
 
 
@@ -533,7 +539,7 @@ class RibonanzaNet(nn.Module):
             src,pairwise_features=checkpoint.checkpoint(self.custom(layer), 
             [src, pairwise_features, src_mask, return_aw],
             use_reentrant=False)
-            #src,pairwise_features=layer([src, pairwise_features, src_mask, return_aw])
+            
             #src,pairwise_features=layer(src, pairwise_features, src_mask,return_aw=return_aw,use_gradient_checkpoint=self.use_gradient_checkpoint)
             #print(src.shape)
         #output = self.decoder(src).squeeze(-1)+pairwise_features.mean()*0

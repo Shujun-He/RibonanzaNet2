@@ -1,1 +1,1 @@
-python generate_multinode_configs.py --n_nodes 16 --n_gpus_per_node 8 --master_node gpu001 --script_name run.py
+python generate_multinode_configs.py --n_nodes 1 --n_gpus_per_node 8 --master_node gpu010 --script_name run_pl.py
