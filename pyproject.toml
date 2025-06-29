@@ -9,6 +9,7 @@ dependencies = [
     "grain>=0.2.9",
     "h5py>=3.13.0",
     "jax>=0.6.1",
+    "jax[cuda12]",
     "jmp>=0.0.4",
     "matplotlib>=3.10.3",
     "numpy>=2.2.6",
@@ -18,7 +19,6 @@ dependencies = [
     "polars>=1.30.0",
     "scikit-learn>=1.6.1",
     "scipy>=1.15.3",
-    "torch>=2.7.0",
     "tqdm>=4.67.1",
 ]
 
@@ -26,9 +26,4 @@ dependencies = [
 dev = [
     "ruff>=0.11.10",
     "ty>=0.0.1a6",
-]
-torch = [
-    "accelerate>=1.7.0",
-    "pytorch-ranger>=0.1.1",
-    "torch>=2.7.0",
 ]

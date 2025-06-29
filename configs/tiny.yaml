@@ -45,4 +45,4 @@ gpu_id: "0"
 
 # data files
 hdf_files:
-  - /usr/local/google/home/jbms/OneMil.v0.1.0.hdf5
+  - ./input/OneMil.v0.1.0.hdf5

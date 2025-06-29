@@ -25,6 +25,8 @@ max_len: 177
 log_interval: 2000 #save checkpoints every log_interval steps
 previous_model_path: "none"
 use_noise_aug: false
+mixed_precision: "bf16"
+mixed_precision_policy: "compute=bfloat16,params=float32,output=bfloat16"
 
 #Data scaling
 use_data_percentage: 0.1
@@ -39,4 +41,4 @@ gpu_id: "0"
 
 # data files
 hdf_files:
-  - /lustre/fs0/scratch/shujun/BothLanes_RawReads/OneMil.v0.1.0.hdf5
+  - ./input/OneMil.v0.1.0.hdf5
