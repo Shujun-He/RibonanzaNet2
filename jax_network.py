@@ -350,9 +350,9 @@ class TriangleMultiplicativeModule(nnx.Module):
         )
 
         if mix == "outgoing":
-            self.mix_einsum_eq = "... i k d, ... j k d -> ... i j d"
+            self.perm_left, self.perm_right = (0, 3, 1, 2), (0, 3, 2, 1)
         elif mix == "ingoing":
-            self.mix_einsum_eq = "... k i d, ... k j d -> ... i j d"
+            self.perm_left, self.perm_right = (0, 3, 2, 1), (0, 3, 1, 2)
 
         self.to_out_norm = nnx.LayerNorm(
             hidden_dim,
@@ -402,7 +402,10 @@ class TriangleMultiplicativeModule(nnx.Module):
         left = left * left_gate
         right = right * right_gate
 
-        out = jnp.einsum(self.mix_einsum_eq, left, right)
+        out = jnp.matmul(
+            left.transpose(self.perm_left),
+            right.transpose(self.perm_right)
+        ).transpose((0, 2, 3, 1))
 
         out = self.to_out_norm(out)
         out = out * out_gate
