@@ -45,6 +45,7 @@ def get_train_and_validation_data_loaders(config):
         batch_size=config.batch_size,
         shuffle=getattr(config, "shuffle_training_data", True),
         max_len=config.max_len,
+        epochs=config.epochs,
     )
 
     val_loader = jax_dataset.make_data_loader(
