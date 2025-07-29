@@ -13,7 +13,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType, FullStateDictConfig, ShardedStateDictConfig
 from accelerate.utils.fsdp_utils import save_fsdp_model
 import multiprocessing
-
+from triangle_mult import triangle_mult_outgoing, triangle_mult_ingoing, triangle_mult_outgoing_op, triangle_mult_ingoing_op
 
 #multiprocessing.set_start_method("spawn")
 
@@ -147,6 +147,11 @@ lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,len(train_loade
 optimizer, train_loader, val_loader, lr_schedule = accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule)
 
 #torch._logging.set_logs(output_code=True)
+
+torch.compiler.allow_in_graph(triangle_mult_outgoing_op)
+torch.compiler.allow_in_graph(triangle_mult_ingoing_op)
+torch.compiler.allow_in_graph(triangle_mult_outgoing)
+torch.compiler.allow_in_graph(triangle_mult_ingoing)
 
 @torch.compile(fullgraph=False)
 def optimizer_step():

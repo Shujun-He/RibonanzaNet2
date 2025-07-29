@@ -12,7 +12,14 @@ from dropout import *
 
 from torch.cuda.amp import autocast
 
-from triangle_mult import triangle_mult_outgoing, triangle_mult_ingoing
+from triangle_mult import triangle_mult_outgoing, triangle_mult_ingoing, triangle_mult_outgoing_op, triangle_mult_ingoing_op
+
+# TF32精度設定（性能向上のため）
+torch.set_float32_matmul_precision('high')
+
+# PyTorchの最適化設定
+torch.backends.cuda.matmul.allow_tf32 = True  # TF32を明示的に有効化
+torch.backends.cudnn.allow_tf32 = True        # cuDNNでもTF32を有効化
 
 def recursive_linear_init(m,scale_factor):
     for child_name, child in m.named_modules():
@@ -238,8 +245,8 @@ class ConvTransformerEncoderLayer(nn.Module):
 
         #self.conv=nn.Conv1d(d_model,d_model,k,padding=k//2)
 
-        self.triangle_update_out=TriangleMultiplicativeModule2(dim=pairwise_dimension,mix='outgoing')
-        self.triangle_update_in=TriangleMultiplicativeModule2(dim=pairwise_dimension,mix='ingoing')
+        self.triangle_update_out=TriangleMultiplicativeModule(dim=pairwise_dimension,mix='outgoing')
+        self.triangle_update_in=TriangleMultiplicativeModule(dim=pairwise_dimension,mix='ingoing')
 
         self.pair_dropout_out=DropoutRowwise(dropout)
         self.pair_dropout_in=DropoutRowwise(dropout)
@@ -445,7 +452,7 @@ class TriangleMultiplicativeModule2(nn.Module):
         dim,
         hidden_dim = None,
         mix = 'ingoing',
-        window_size = 16
+        window_size = 256
     ):
         super().__init__()
         assert mix in {'ingoing', 'outgoing'}, 'mix must be either ingoing or outgoing'
@@ -497,9 +504,9 @@ class TriangleMultiplicativeModule2(nn.Module):
         # checkpointを使用せずに直接実行
         # これにより、compile時の問題を回避
         if self.mix == 'outgoing':
-            out = triangle_mult_outgoing(left, right, self.window_size)
+            out = triangle_mult_outgoing_op(left, right, self.window_size)
         else:
-            out = triangle_mult_ingoing(left, right, self.window_size)
+            out = triangle_mult_ingoing_op(left, right, self.window_size)
 
         out = self.to_out_norm(out)
         out = out * out_gate
