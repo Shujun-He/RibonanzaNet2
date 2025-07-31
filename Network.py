@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 import torch.utils.checkpoint as checkpoint
+from cuequivariance_torch import triangle_multiplicative_update
 
 from dropout import *
 
@@ -372,66 +373,38 @@ class TriangleMultiplicativeModule(nn.Module):
         mix = 'ingoing'
     ):
         super().__init__()
-        assert mix in {'ingoing', 'outgoing'}, 'mix must be either ingoing or outgoing'
+        assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
+        assert hidden_dim is None, "hidden_dim must be None with cuEq"
 
-        hidden_dim = default(hidden_dim, dim)
-        self.norm = nn.LayerNorm(dim)
+        self.direction = mix
 
-        self.left_proj = nn.Linear(dim, hidden_dim)
-        self.right_proj = nn.Linear(dim, hidden_dim)
+        self.norm_in = nn.LayerNorm(dim)
+        self.norm_out = nn.LayerNorm(dim)
 
-        self.left_gate = nn.Linear(dim, hidden_dim)
-        self.right_gate = nn.Linear(dim, hidden_dim)
-        self.out_gate = nn.Linear(dim, hidden_dim)
-
-        # initialize all gating to be identity
-
-        for gate in (self.left_gate, self.right_gate, self.out_gate):
-            nn.init.constant_(gate.weight, 0.)
-            nn.init.constant_(gate.bias, 1.)
-
-        if mix == 'outgoing':
-            self.mix_einsum_eq = '... i k d, ... j k d -> ... i j d'
-        elif mix == 'ingoing':
-            self.mix_einsum_eq = '... k i d, ... k j d -> ... i j d'
-
-        self.to_out_norm = nn.LayerNorm(hidden_dim)
-        self.to_out = nn.Linear(hidden_dim, dim)
+        # TODO: initialize all gating to be identity (was weight=1, bias=0 before, now random)
+        self.proj_in = nn.Linear(2 * dim, dim, bias=False)
+        self.gate_in = nn.Linear(2 * dim, dim, bias=False)
+        self.proj_out = nn.Linear(dim, dim, bias=False)
+        self.gate_out = nn.Linear(dim, dim, bias=False)
 
     def forward(self, x, src_mask = None):
         src_mask=src_mask.unsqueeze(-1).float()
         mask = torch.matmul(src_mask,src_mask.permute(0,2,1))
 
-        # print(mask.shape)
-        # plt.imshow(mask[0].detach().cpu())
-        # plt.savefig('mask.png')
-        # exit()
-
-        assert x.shape[1] == x.shape[2], 'feature map must be symmetrical'
-        if exists(mask):
-            mask = rearrange(mask, 'b i j -> b i j ()')
-
-        x = self.norm(x)
-
-        left = self.left_proj(x)
-        right = self.right_proj(x)
-
-        if exists(mask):
-            left = left * mask
-            right = right * mask
-
-        left_gate = self.left_gate(x).sigmoid()
-        right_gate = self.right_gate(x).sigmoid()
-        out_gate = self.out_gate(x).sigmoid()
-
-        left = left * left_gate
-        right = right * right_gate
-
-        out = einsum(self.mix_einsum_eq, left, right)
-
-        out = self.to_out_norm(out)
-        out = out * out_gate
-        return self.to_out(out)
+        return triangle_multiplicative_update(
+            x=x,
+            direction=self.direction,
+            mask=mask,
+            norm_in_weight=self.norm_in.weight,
+            norm_in_bias=self.norm_in.bias,
+            p_in_weight=self.proj_in.weight,
+            g_in_weight=self.gate_in.weight,
+            norm_out_weight=self.norm_out.weight,
+            norm_out_bias=self.norm_out.bias,
+            p_out_weight=self.proj_out.weight,
+            g_out_weight=self.gate_out.weight,
+            eps=1e-5,
+        )
 
 
 class RibonanzaNet(nn.Module):
