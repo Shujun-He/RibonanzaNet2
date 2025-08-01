@@ -376,14 +376,14 @@ class TriangleMultiplicativeModule(nn.Module):
         assert mix in {"ingoing", "outgoing"}, "mix must be either ingoing or outgoing"
         assert hidden_dim is None, "hidden_dim must be None with cuEq"
 
-        self.direction = mix
+        self.direction = "outgoing" if mix == "outgoing" else "incoming"
 
         self.norm_in = nn.LayerNorm(dim)
         self.norm_out = nn.LayerNorm(dim)
 
         # TODO: initialize all gating to be identity (was weight=1, bias=0 before, now random)
-        self.proj_in = nn.Linear(2 * dim, dim, bias=False)
-        self.gate_in = nn.Linear(2 * dim, dim, bias=False)
+        self.proj_in = nn.Linear(dim, 2 * dim, bias=False)
+        self.gate_in = nn.Linear(dim, 2 * dim, bias=False)
         self.proj_out = nn.Linear(dim, dim, bias=False)
         self.gate_out = nn.Linear(dim, dim, bias=False)
 
