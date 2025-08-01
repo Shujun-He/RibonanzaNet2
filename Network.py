@@ -11,7 +11,9 @@ from cuequivariance_torch import triangle_multiplicative_update
 
 from dropout import *
 
-def recursive_linear_init(m,scale_factor):
+torch.set_float32_matmul_precision('high')
+
+def recursive_linear_init(m, scale_factor):
     for child_name, child in m.named_modules():
         if 'gate' not in child_name:
             custom_weight_init(child,scale_factor)
