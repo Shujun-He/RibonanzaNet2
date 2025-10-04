@@ -19,6 +19,12 @@ def bsub_directives(args: dict, idx: int) -> list[str]:
     if gpu_type not in ['a100', 'h100', 'h200']:
         raise ValueError(f"Invalid gpu_type '{gpu_type}'. Must be one of: a100, h100, h200.")
     queue = f"gpu_{gpu_type}"
+    max_gpus_per_node = 4 if gpu_type == 'a100' else 8
+    if args['n_gpus_per_node'] > max_gpus_per_node:
+        raise ValueError(
+            f"n_gpus_per_node {args['n_gpus_per_node']} exceeds max "
+            f"for {gpu_type} ({max_gpus_per_node})."
+        )
 
     # Directives common to all jobs
     lines = [
@@ -59,7 +65,7 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
     lines = [
         f"  --num_processes {args['n_gpus_per_node'] * args['n_nodes']} \\",
         f"  --num_machines {args['n_nodes']} \\",
-        "  --mixed_precision bf16 \\",
+        f"  --mixed_precision {args['mixed_precision']} \\",
     ]
 
     # Additional arguments for multi-node runs
@@ -182,6 +188,12 @@ def main():
         type=str,
         default=f"rnet2-training-{datestr}",
         help="Base name for the job (default: rnet2-training-<timestamp>)"
+    )
+    parser.add_argument(
+        "--mixed_precision",
+        type=str,
+        default="bf16",
+        help="Mixed precision setting (fp16 or bf16; default: bf16)"
     )
 
     args = parser.parse_args()
