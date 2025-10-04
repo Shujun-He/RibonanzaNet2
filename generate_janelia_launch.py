@@ -78,7 +78,7 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
         lines.append('  --main_process_ip "$MASTER_ADDR" \\')
         lines.append('  --main_process_port "$PORT" \\')
         lines.append(f"  --machine_rank {idx} \\")
-        lines.append("  --distributed_type FSDP \\")
+        lines.append("  --use_fsdp \\")
         lines.append("  --fsdp_min_num_params 1000000 \\")
         lines.append("  --fsdp_auto_wrap_policy SIZE_BASED_WRAP \\")
         lines.append("  --fsdp_backward_prefetch NO_PREFETCH \\")
