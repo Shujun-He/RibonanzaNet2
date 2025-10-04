@@ -118,7 +118,7 @@ def generate_all_launch_scripts(args: dict):
         lines.append("")
 
         if n_nodes > 1:
-            lines.extend(nccl_env_vars())
+            # lines.extend(nccl_env_vars())
             lines.append("")
             lines.append(
                 f"MASTER_ADDR=$(getent ahostsv4 {args['master_node']} | awk 'NR==1{{print $1}}')"
