@@ -112,7 +112,6 @@ def generate_all_launch_scripts(args: dict):
             lines.append("# Override defaults by setting environment variables before launching")
             lines.append("PORT=${PORT:-29500}")
             lines.append("NIC_IFACE=${NIC_IFACE:-ens3}")
-            lines.append("WAIT_SECS=${WAIT_SECS:-60}")
             lines.append("")
         lines.append("export PYTHONUNBUFFERED=1")
         lines.append("export OMP_NUM_THREADS=8")
@@ -126,16 +125,6 @@ def generate_all_launch_scripts(args: dict):
             )
             if idx == 0:
                 lines.append('echo "MASTER_ADDR=$MASTER_ADDR PORT=$PORT IFACE=$NIC_IFACE"')
-            else:
-             # wait for master:$PORT (robust against staggered starts)
-                lines.append("deadline=$((SECONDS+WAIT_SECS))")
-                lines.append('until (exec 3<>/dev/tcp/"$MASTER_ADDR"/"$PORT") 2>/dev/null; do')
-                lines.append(
-                    '  if (( SECONDS >= deadline )); then '
-                    'echo "Timed out waiting for $MASTER_ADDR:$PORT"; exit 1; fi'
-                )
-                lines.append("  sleep 2")
-                lines.append("done; exec 3>&-")
 
 
         lines.append("")
