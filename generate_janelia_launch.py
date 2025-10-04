@@ -39,6 +39,11 @@ def bsub_directives(args: dict, idx: int) -> list[str]:
 
     # Request specific host for master node in multi-node runs
     if args['n_nodes'] > 1 and idx == 0:
+        if not args['master_node']:
+            raise ValueError(
+                "master_node must be specified for multi-node runs. "
+                "Use `bmgroups` to find eligible nodes."
+            )
         lines.append(f"#BSUB -m {args['master_node']}")
 
     return lines
@@ -102,20 +107,38 @@ def generate_all_launch_scripts(args: dict):
 
         lines.append("")
         lines.append("set -euo pipefail")
+        lines.append("")
         if args['n_nodes'] > 1:
+            lines.append("# Override defaults by setting environment variables before launching")
             lines.append("PORT=${PORT:-29500}")
             lines.append("NIC_IFACE=${NIC_IFACE:-ens3}")
-        lines.append("")
+            lines.append("WAIT_SECS=${WAIT_SECS:-60}")
+            lines.append("")
         lines.append("export PYTHONUNBUFFERED=1")
         lines.append("export OMP_NUM_THREADS=8")
         lines.append("")
 
         if n_nodes > 1:
             lines.extend(nccl_env_vars())
+            lines.append("")
+            lines.append(
+                f"MASTER_ADDR=$(getent ahostsv4 {args['master_node']} | awk 'NR==1{{print $1}}')"
+            )
             if idx == 0:
-                lines.append("MASTER_ADDR=$(hostname -f)")
                 lines.append('echo "MASTER_ADDR=$MASTER_ADDR PORT=$PORT IFACE=$NIC_IFACE"')
+            else:
+             # wait for master:$PORT (robust against staggered starts)
+                lines.append("deadline=$((SECONDS+WAIT_SECS))")
+                lines.append('until (exec 3<>/dev/tcp/"$MASTER_ADDR"/"$PORT") 2>/dev/null; do')
+                lines.append(
+                    '  if (( SECONDS >= deadline )); then '
+                    'echo "Timed out waiting for $MASTER_ADDR:$PORT"; exit 1; fi'
+                )
+                lines.append("  sleep 2")
+                lines.append("done; exec 3>&-")
 
+
+        lines.append("")
         lines.append("accelerate launch \\")
         lines.extend(accelerate_args(args, idx))
         lines.append(f"  {args['script_name']} --config_path {args['config_path']}")
@@ -129,6 +152,7 @@ def generate_all_launch_scripts(args: dict):
 
     print(f"\nGenerated all launch scripts in ./{launch_dir}")
 
+    # Generate a master script to launch all jobs
     launch_all_script = Path("launch_all.sh")
     with open(launch_all_script, 'w', encoding="utf-8") as f:
         f.write("#!/bin/bash\n\n")
