@@ -73,11 +73,8 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
         f"  --mixed_precision {args['mixed_precision']} \\",
     ]
 
-    # Additional arguments for multi-node runs
-    if args['n_nodes'] > 1:
-        lines.append('  --main_process_ip "$MASTER_ADDR" \\')
-        lines.append('  --main_process_port "$PORT" \\')
-        lines.append(f"  --machine_rank {idx} \\")
+    # For more than 1 GPU, use FSDP (which is faster than DDP for our use case)
+    if args['n_nodes'] * args['n_gpus_per_node'] > 1:
         lines.append("  --use_fsdp \\")
         lines.append("  --fsdp_min_num_params 1000000 \\")
         lines.append("  --fsdp_auto_wrap_policy SIZE_BASED_WRAP \\")
@@ -85,6 +82,13 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
         lines.append("  --fsdp_sharding_strategy SHARD_GRAD_OP \\")
         lines.append("  --fsdp_state_dict_type FULL_STATE_DICT \\")
         lines.append("  --fsdp_use_orig_params true \\")
+
+
+    # Additional arguments for multi-node runs
+    if args['n_nodes'] > 1:
+        lines.append('  --main_process_ip "$MASTER_ADDR" \\')
+        lines.append('  --main_process_port "$PORT" \\')
+        lines.append(f"  --machine_rank {idx} \\")
 
     return lines
 
