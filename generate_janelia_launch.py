@@ -42,7 +42,7 @@ def bsub_directives(args: dict, idx: int) -> list[str]:
         if not args['master_node']:
             raise ValueError(
                 "master_node must be specified for multi-node runs. "
-                "Use `bmgroups` to find eligible nodes."
+                f"Use `bhosts -w {args['gpu_type']}s` to find eligible nodes."
             )
         lines.append(f"#BSUB -m {args['master_node']}")
 
@@ -54,11 +54,8 @@ def nccl_env_vars() -> list[str]:
     lines = [
         "# NCCL settings optimized for ethernet",
         "export NCCL_DEBUG=INFO",
-        "export NCCL_IB_DISABLE=1",
-        'export NCCL_SOCKET_IFNAME="$NIC_IFACE"',
-        "export NCCL_NSOCKS_PERTHREAD=2",
-        "export NCCL_SOCKET_NTHREADS=8",
-        "export NCCL_MIN_NCHANNELS=8",
+        "export NCCL_NSOCKS_PERTHREAD=4",
+        "export NCCL_SOCKET_NTHREADS=4",
     ]
 
     return lines
@@ -75,6 +72,7 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
 
     # For more than 1 GPU, use FSDP (which is faster than DDP for our use case)
     if args['n_nodes'] * args['n_gpus_per_node'] > 1:
+        lines.append("  --same_network \\")
         lines.append("  --use_fsdp \\")
         lines.append("  --fsdp_min_num_params 1000000 \\")
         lines.append("  --fsdp_auto_wrap_policy SIZE_BASED_WRAP \\")
@@ -115,7 +113,6 @@ def generate_all_launch_scripts(args: dict):
         if args['n_nodes'] > 1:
             lines.append("# Override defaults by setting environment variables before launching")
             lines.append("PORT=${PORT:-29500}")
-            lines.append("NIC_IFACE=${NIC_IFACE:-ens3}")
             lines.append("")
         lines.append("export PYTHONUNBUFFERED=1")
         lines.append("export OMP_NUM_THREADS=8")
@@ -128,7 +125,7 @@ def generate_all_launch_scripts(args: dict):
                 f"MASTER_ADDR=$(getent ahostsv4 {args['master_node']} | awk 'NR==1{{print $1}}')"
             )
             if idx == 0:
-                lines.append('echo "MASTER_ADDR=$MASTER_ADDR PORT=$PORT IFACE=$NIC_IFACE"')
+                lines.append('echo "MASTER_ADDR=$MASTER_ADDR PORT=$PORT"')
 
 
         lines.append("")
