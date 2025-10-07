@@ -1,11 +1,9 @@
 import math
 import torch
 import torch.nn as nn
-from torch import einsum
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from einops import rearrange, repeat, reduce
-from einops.layers.torch import Rearrange
+from einops import rearrange
 import torch.utils.checkpoint as checkpoint
 from cuequivariance_torch import triangle_multiplicative_update
 
@@ -383,11 +381,17 @@ class TriangleMultiplicativeModule(nn.Module):
         self.norm_in = nn.LayerNorm(dim)
         self.norm_out = nn.LayerNorm(dim)
 
-        # TODO: initialize all gating to be identity (was weight=1, bias=0 before, now random)
-        self.proj_in = nn.Linear(dim, 2 * dim, bias=False)
-        self.gate_in = nn.Linear(dim, 2 * dim, bias=False)
-        self.proj_out = nn.Linear(dim, dim, bias=False)
-        self.gate_out = nn.Linear(dim, dim, bias=False)
+        self.proj_in = nn.Linear(dim, 2 * dim)
+        self.gate_in = nn.Linear(dim, 2 * dim)
+        self.proj_out = nn.Linear(dim, dim)
+        self.gate_out = nn.Linear(dim, dim)
+
+        # Initialize gating so that gated activities act as the identity
+        torch.nn.init.constant_(self.gate_in.weight, 0.0)
+        torch.nn.init.constant_(self.gate_in.bias, 1.0)
+        torch.nn.init.constant_(self.gate_out.weight, 0.0)
+        torch.nn.init.constant_(self.gate_out.bias, 1.0)
+
 
     def forward(self, x, src_mask = None):
         src_mask=src_mask.unsqueeze(-1).float()
@@ -400,11 +404,15 @@ class TriangleMultiplicativeModule(nn.Module):
             norm_in_weight=self.norm_in.weight,
             norm_in_bias=self.norm_in.bias,
             p_in_weight=self.proj_in.weight,
+            p_in_bias=self.proj_in.bias,
             g_in_weight=self.gate_in.weight,
+            g_in_bias=self.gate_in.bias,
             norm_out_weight=self.norm_out.weight,
             norm_out_bias=self.norm_out.bias,
             p_out_weight=self.proj_out.weight,
+            p_out_bias=self.proj_out.bias,
             g_out_weight=self.gate_out.weight,
+            g_out_bias=self.gate_out.bias,
             eps=1e-5,
         )
 
