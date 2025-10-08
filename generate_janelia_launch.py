@@ -44,7 +44,7 @@ def bsub_directives(args: dict) -> list[str]:
         f"#BSUB -J {jobname}",
         "#BSUB -P das",
         f"#BSUB -n {n_total_cores}",
-        f'#BSUB -gpu "num={args['n_gpus_per_node']}"',
+        f'#BSUB -gpu "num={args["n_gpus_per_node"]}"',
         f"#BSUB -oo run-logs/{jobname}.out",
         f"#BSUB -eo run-logs/{jobname}.err",
     ]
@@ -103,16 +103,14 @@ def accelerate_args(args: dict, idx: int) -> list[str]:
     return lines
 
 
-def blaunch_command(args:dict, idx: int, postfix: str) -> list[str]:
+def blaunch_command(args: dict, idx: int, postfix: str) -> list[str]:
     """Generate a blaunch command for multi-node execution."""
-    log_name = f"run-logs/{args['job_name']}-{postfix}"
-
     lines = [f"# Launch command for {postfix}"]
-    lines.append(f'blaunch -z ${{HOSTS[{idx}]}} "')
+    lines.append(f'blaunch ${{HOSTS[{idx}]}} "')
     lines.extend(nccl_env_vars())
-    lines.append('${PYTHON_EXECUTABLE} accelerate launch \\')
+    lines.append("accelerate launch \\")
     lines.extend(accelerate_args(args, idx))
-    lines.append(f'  > {log_name}.out 2> {log_name}.err')
+    lines.append(f"  {args['script_name']} --config_path {args['config_path']}")
     lines.append('" &')
 
     return lines
@@ -134,7 +132,6 @@ def generate_all_launch_scripts(args: dict):
     # Add some environment setup commands
     lines.append("")
     lines.append("set -euo pipefail")
-    lines.append("PYTHON_EXECUTABLE=$(which python)")
     lines.append("")
     lines.append("export PYTHONUNBUFFERED=1")
     lines.append("export OMP_NUM_THREADS=8")
@@ -171,6 +168,9 @@ def generate_all_launch_scripts(args: dict):
         for i in range(1, n_nodes):
             lines.append("")
             lines.extend(blaunch_command(args, i, f"worker{i:0{n_leading_zeros}d}"))
+        lines.append("")
+        lines.append('# Wait for all remote launches to finish')
+        lines.append('wait')
 
     # Write LSF script to file
     lsf_script = Path("launch.sh")
