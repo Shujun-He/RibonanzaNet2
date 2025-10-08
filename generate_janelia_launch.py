@@ -108,7 +108,7 @@ def blaunch_command(args:dict, idx: int, postfix: str) -> list[str]:
     log_name = f"run-logs/{args['job_name']}-{postfix}"
 
     lines = [f"# Launch command for {postfix}"]
-    lines.append(f'blaunch -z ${{hosts[{idx}]}} "')
+    lines.append(f'blaunch -z ${{HOSTS[{idx}]}} "')
     lines.extend(nccl_env_vars())
     lines.append('${PYTHON_EXECUTABLE} accelerate launch \\')
     lines.extend(accelerate_args(args, idx))
@@ -148,14 +148,13 @@ def generate_all_launch_scripts(args: dict):
         lines.append('    echo "Adding host: $host"')
         lines.append('    HOSTS+=($host)')
         lines.append('done')
-        lines.append('echo Master node is ${hosts[0]}')
-        lines.append("MASTER_ADDR=$(getent ahostsv4 ${hosts[0]} | awk 'NR==1{print $1}')")
+        lines.append('echo Master node is ${HOSTS[0]}')
+        lines.append("MASTER_ADDR=$(getent ahostsv4 ${HOSTS[0]} | awk 'NR==1{print $1}')")
         lines.append("")
-        lines.append('CHECK="do while"')
-        lines.append('while [[ ! -z $CHECK ]]; do')
-        lines.append('    PORT=$(( ( RANDOM % 40000 )  + 20000 ))')
-        lines.append('    CHECK=$(netstat -a | grep $PORT)')
-        lines.append('done')
+        lines.append(
+            "PORT=$(python -c 'import socket; s=socket.socket(); "
+            's.bind(("0.0.0.0", 0)); print(s.getsockname()[1]); s.close()\')'
+        )
         lines.append('echo Master port is $PORT')
         lines.append("")
 
