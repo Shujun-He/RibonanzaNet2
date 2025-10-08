@@ -38,7 +38,8 @@ def bsub_directives(args: dict) -> list[str]:
     gpu_type = GPU_TYPES.get(args['gpu_type'].lower())
 
     # Directives common to all jobs
-    n_cores_per_node = args['n_cores_per_gpu'] * args['n_gpus_per_node']
+    n_cores_per_gpu = gpu_type.max_cpus_per_node // gpu_type.max_gpus_per_node
+    n_cores_per_node = n_cores_per_gpu * args['n_gpus_per_node']
     n_total_cores = n_cores_per_node * args['n_nodes']
     lines = [
         f"#BSUB -J {jobname}",
@@ -55,7 +56,7 @@ def bsub_directives(args: dict) -> list[str]:
     else:
         lines.extend([
             f"#BSUB -q {gpu_type.parallel_queue}",
-            f"#BSUB -R 'span[ptile={n_cores_per_node}]'",
+            f"#BSUB -app parallel-{gpu_type.max_cpus_per_node}",
         ])
 
     return lines
@@ -204,12 +205,6 @@ def main():
         help="Number of GPUs per node (default: max for selected GPU type)"
     )
     parser.add_argument(
-        "--n_cores_per_gpu",
-        type=int,
-        default=8,
-        help="Number of CPU cores per GPU (default: 8)"
-    )
-    parser.add_argument(
         "--config_path",
         type=str,
         required=True,
@@ -257,10 +252,10 @@ def main():
             f"n_gpus_per_node {args['n_gpus_per_node']} exceeds max "
             f"for {gpu_type.name} ({gpu_type.max_gpus_per_node})."
         )
-    if args['n_cores_per_gpu'] * args['n_gpus_per_node'] > gpu_type.max_cpus_per_node:
+    if args['n_nodes'] > 1 and args['n_gpus_per_node'] != gpu_type.max_gpus_per_node:
         raise ValueError(
-            f"Total CPU cores per node ({args['n_cores_per_gpu'] * args['n_gpus_per_node']}) "
-            f"exceeds max for {gpu_type.name} ({gpu_type.max_cpus_per_node})."
+            f"Warning: For multi-node runs, it's required to use the maximum "
+            f"number of GPUs per node ({gpu_type.max_gpus_per_node} for {gpu_type.name})."
         )
 
     generate_all_launch_scripts(args)
