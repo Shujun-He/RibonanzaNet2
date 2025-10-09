@@ -34,7 +34,6 @@ Training is done in 2 stages:
 
 ## Config
 
-Config is `configs/pairwise.yaml`
-
-
+Config is `configs/pairwise.yaml`.
+Note that `nclass: 2` is required to run the training.
 
