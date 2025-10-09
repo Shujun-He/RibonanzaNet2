@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 import yaml
 import random
-import numpy as np
 
 def generate_default_node_list(n_nodes: int) -> list:
     """Generate default node names in the format gpu001, gpu002, etc."""
@@ -45,7 +44,7 @@ def generate_accelerate_config(node_rank: int, n_nodes: int, n_gpus_per_node: in
         },
         'machine_rank': node_rank,
         'main_process_ip': main_node,
-        'main_process_port': base_port + 12,
+        'main_process_port': base_port + 1,
         'main_training_function': 'main',
         'mixed_precision': 'bf16',
         'num_machines': n_nodes,
@@ -82,12 +81,8 @@ def generate_slurm_script(n_gpus: int, config_file: str,
         slurm_params.append(f"#SBATCH --nodelist={master_node}")
     
     # Add the accelerate launch command
-    command = f"\n\n{python_env_path}/bin/accelerate launch --config_file {config_file} {script_name}\n"
+    command = f"\n\n{python_env_path}/bin/accelerate launch --config_file {config_file} {script_name}"
     
-    if master_node is not None:
-        command+="/lustre/fs0/scratch/shujun/miniconda3/envs/torch/bin/python generate_finetune_configs.py\n"
-        command+="bash launch_finetune.sh\n"
-
     return '\n'.join(slurm_params) + command
 
 def generate_all_configs(n_nodes: int = None, node_list: list = None,

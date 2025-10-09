@@ -191,7 +191,6 @@ pretrain_logs=pd.read_csv('logs/fold0.csv')
 best_epoch=pretrain_logs['val_loss'].argmin()
 #best_epoch=9
 best_weights_path=f"models/epoch_{best_epoch}/pytorch_model_fsdp.bin"
-#best_weights_path='models/step_22000/pytorch_model_fsdp.bin'
 
 print(f"best_weights_path: {best_weights_path}")
 

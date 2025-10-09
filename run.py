@@ -1,3 +1,4 @@
+import polars as pl
 from Dataset import *
 from Network import *
 from Functions import *
@@ -12,17 +13,13 @@ import matplotlib.pyplot as plt
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType, FullStateDictConfig, ShardedStateDictConfig
 from accelerate.utils.fsdp_utils import save_fsdp_model
-import multiprocessing
-
-
-#multiprocessing.set_start_method("spawn")
 
 # import torch._dynamo
 # torch._dynamo.config.suppress_errors = True
 
 #from torch.cuda.amp import GradScaler
 #from torch import autocast
-#if __name__ == "__main__":
+
 start_time = time.time()
 
 parser = argparse.ArgumentParser()
@@ -34,11 +31,10 @@ args = parser.parse_args()
 np.random.seed(0)
 
 config = load_config_from_yaml(args.config_path)
-config.print()
 
 accelerator = Accelerator(mixed_precision='bf16')
 
-os.environ["POLARS_MAX_THREADS"] = "1"
+#os.environ["POLARS_MAX_THREADS"] = "1"
 os.environ["CUDA_VISIBLE_DEVICES"]=str(config.gpu_id)
 os.environ["TORCH_DISTRIBUTED_DEBUG"]='DETAIL'
 
@@ -49,8 +45,34 @@ os.system('mkdir oofs')
 logger=CSVLogger(['epoch','train_loss','val_loss'],f'logs/fold{config.fold}.csv')
 
 
-hdf_files, train_indices, val_indices = load_and_split_rn2_ABCD()
+with open('data/data_dict.p','rb') as f:
+    # data_dict = {
+    #     'sequences': sequences,
+    #     'sequence_ids': sequence_ids,
+    #     'SN': SN,
+    # }
+    data_dict=pickle.load(f)
 
+
+with open('data/dataset_name.p','rb') as f:
+    dataset_name=pickle.load(f)
+
+data_shape=np.load('data/data_shape.npy')
+
+data_dict['labels']=np.memmap('data/labels.mmap', dtype='float32', mode='r', shape=tuple(data_shape))
+data_dict['errors']=np.memmap('data/errors.mmap', dtype='float32', mode='r', shape=tuple(data_shape))
+
+
+
+#StratifiedKFold on dataset
+kfold=StratifiedKFold(n_splits=config.nfolds,shuffle=True, random_state=0)
+fold_indices={}
+for i, (train_index, test_index) in enumerate(kfold.split(np.arange(len(dataset_name)),dataset_name)):
+    fold_indices[i]=(train_index,test_index)
+
+
+train_indices=fold_indices[config.fold][0]
+val_indices=fold_indices[config.fold][1]
 
 # for data scaling experiments
 if config.use_data_percentage<1:
@@ -59,50 +81,60 @@ if config.use_data_percentage<1:
     train_indices=np.random.choice(train_indices,size,replace=False)
     print(f"number of sequences in train {len(train_indices)} after subsampling")
 
+if config.use_dirty_data:
+    print(f"number of sequences in train {len(train_indices)}")
+    train_indices=np.concatenate([train_indices,np.arange(len(dataset_name),len(data_dict['labels']))])
+    print(f"number of sequences in train {len(train_indices)} after using dirty data")
 
-#exit()
-
-# plot_and_save_bar_chart([data_dict['dataset_name'][i] for i in train_indices],
-#                 f"dataset_cnt.png")
 
 
 if hasattr(config,"dataset2drop"):
-    print(f"dropping {config.dataset2drop} from training data")
-    
-    # print(set(data_dict['dataset_name']))
-    # exit()
-    train_indices=dataset_dropout(data_dict['dataset_name'], train_indices, config.dataset2drop)
+    train_indices=dataset_dropout(dataset_name, train_indices, config.dataset2drop)
 
 
-print(f"train shape: {len(train_indices)}")
-print(f"val shape: {len(val_indices)}")
+# if accelerator.is_local_main_process:
+#     pl.Config.set_fmt_str_lengths(100)
+#     print(data[np.concatenate([train_indices*2,train_indices*2+1])]['dataset_name'].value_counts(sort=True))
+#     print(data[np.concatenate([val_indices*2,val_indices*2+1])]['dataset_name'].value_counts(sort=True))
+    #print(data[val_indices*2]['dataset_name'].value_counts(sort=True))
+#exit()
+#train_indices=np.concatenate([train_indices,np.arange(len(train_indices),len(train_indices)+len(dirty_data)//2)])
+
+
+val_datasets_names=[dataset_name[i] for i in val_indices]
+
+with open("oofs/val_dataset_names.p",'wb+') as f:
+    pickle.dump(val_datasets_names,f)
+
+# del data
+# del dirty_data
+
+print(f"train shape: {train_indices.shape}")
+print(f"val shape: {val_indices.shape}")
 
 
 
 #pl_train=pl.read_parquet()
-seq_length=config.max_len
+seq_length=data_dict['labels'].shape[1]
 
 # print(seq_length)
 # exit()
-num_workers = min(config.batch_size, multiprocessing.cpu_count() // 8)
 
-train_dataset=RNADataset(hdf_files,train_indices,
-                        flip=config.use_flip_aug,
-                        add_noise=config.use_noise_aug)
+train_dataset=RNADataset(train_indices,data_dict,k=config.k,
+                         flip=config.use_flip_aug)
 train_loader=DataLoader(train_dataset,batch_size=config.batch_size,shuffle=True,
-                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=num_workers,
+                        collate_fn=Custom_Collate_Obj(),num_workers=min(config.batch_size,16),
                         pin_memory=True,
-                        persistent_workers=True,
-                        prefetch_factor=4)
+                        prefetch_factor=4,
+                        persistent_workers=True)
 
-# for i in range(10):
-#     sample=train_dataset[i]
-# exit()
+sample=train_dataset[0]
 
 
-val_dataset=RNADataset(hdf_files,val_indices,train=False)
+
+val_dataset=RNADataset(val_indices,data_dict,train=False,k=config.k)
 val_loader=DataLoader(val_dataset,batch_size=config.test_batch_size,shuffle=False,
-                        collate_fn=Custom_Collate_Obj(config.max_len),num_workers=min(config.batch_size,16))
+                        collate_fn=Custom_Collate_Obj(),num_workers=min(config.batch_size,16))
 
 
 print(accelerator.distributed_type)
@@ -110,51 +142,43 @@ print(accelerator.distributed_type)
 
 model=RibonanzaNet(config)#.cuda()
 
-#model.load_state_dict(torch.load("../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin",map_location='cpu'))
-
-
-load_state_dict_ignore_shape(model, config.previous_model_path)
-
-#reinit last linear layer
-#model.decoder.reset_parameters()
-
 model=accelerator.prepare(model)
 
 total_params = sum(p.numel() for p in model.parameters())
 print(f"Total number of parameters in the model: {total_params}")
 
-optimizer = Ranger(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
+optimizer = Ranger(model.parameters(),weight_decay=config.weight_decay, lr=0)
 #optimizer = torch.optim.Adam(model.parameters(),weight_decay=config.weight_decay, lr=config.learning_rate)
-
-
-
-
 
 criterion=torch.nn.L1Loss(reduction='none')
 val_criterion=torch.nn.L1Loss(reduction='none')
 
 #.to(accelerator.device)#.cuda().float()
 
-cos_epoch=-1
-print(f"cosine annealing from epoch {cos_epoch+1}")
-lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,len(train_loader)//config.gradient_accumulation_steps)
+cos_epoch=int(config.epochs*0.75)-1
+lr_schedule=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,(config.epochs-cos_epoch)*len(train_loader)//config.gradient_accumulation_steps)
 
-# warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
-#                                     total_steps=len(train_loader),
-#                                     final_lr=config.learning_rate)
+warmup_schduler=LinearWarmupScheduler(optimizer=optimizer,
+                                      total_steps=len(train_loader),
+                                      final_lr=config.learning_rate)
 #exit()
-optimizer, train_loader, val_loader, lr_schedule = accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule)
-
-@torch.compile(fullgraph=False)
-def optimizer_step():
-    optimizer.step()
+optimizer, train_loader, val_loader, lr_schedule, warmup_schduler= accelerator.prepare(optimizer, train_loader, val_loader, lr_schedule, warmup_schduler)
+# Print all the weights and biases
+# for name, param in model.named_parameters():
+#     # if 'weight' in name:
+#     #     print(f"Layer: {name}, Weights: {param.data}")
+#     # elif 'bias' in name:
+#     #     print(f"Layer: {name}, Biases: {param.data}")
+    
+#     if "gate" in name:
+#         print(f"Layer: {name}, Weights: {param.data}")
+#         print(f"Layer: {name}, Biases: {param.data}")
     
 if args.compile == 'true':
     model = torch.compile(model,dynamic=False)
 #model = model
 
 best_val_loss=np.inf
-total_steps=0
 for epoch in range(config.epochs):
 
     # training loop
@@ -170,15 +194,16 @@ for epoch in range(config.epochs):
         masks=batch['masks'].bool()#.cuda()
         labels=batch['labels']#.cuda()
         SN=batch['SN']
-        #print_learning_rates(optimizer)
+
         
 
         bs=len(labels)
         #batch_attention_mask=batch['attention_mask'].unsqueeze(1)[:,:,:src.shape[-1],:src.shape[-1]]
 
         loss_masks=batch['loss_masks']#.cuda()
+        errors=batch['errors']#.cuda()#.un
 #SSH FS test 
-        SN=SN.reshape(SN.shape[0],1,SN.shape[1])>=0.5
+        SN=SN.reshape(SN.shape[0],1,SN.shape[1])>=1
         loss_masks=loss_masks*SN
 
         # print(SN.shape)
@@ -194,31 +219,23 @@ for epoch in range(config.epochs):
         with accelerator.autocast():
             output=model(src,masks)
             loss=criterion(output,labels)#*loss_weight BxLxC
-            loss=loss*SN[:,None,:].clip(0.5,1) #weight with SN, downweight low quality data, and high quality data has up to 1 weight
             loss=loss[loss_masks]
             loss=loss.mean()
-            #exit()
-        #exit()
+
         accelerator.backward(loss/config.gradient_accumulation_steps)
         
         #loss.backward()
         if (idx + 1) % config.gradient_accumulation_steps == 0:
-            total_steps+=1
             #if accelerator.sync_gradients:
             accelerator.clip_grad_norm_(model.parameters(), config.clip_grad_norm)
-            #optimizer.step()
-            optimizer_step()
+            optimizer.step()
             optimizer.zero_grad()
             if epoch > cos_epoch:
                 lr_schedule.step()
-            # elif epoch == 0:
-            #     warmup_schduler.step()
+            elif epoch == 0:
+                warmup_schduler.step()
 
         
-            if total_steps % config.log_interval == 0:
-                accelerator.save_state(f"models/step_{total_steps}",safe_serialization=False)
-
-
         total_loss+=loss.item()
         #exit()
         tbar.set_description(f"Epoch {epoch + 1} Loss: {total_loss/(idx+1)}")
@@ -307,6 +324,29 @@ for epoch in range(config.epochs):
 
         if val_loss<best_val_loss:
             best_val_loss=val_loss
+            #if torch.distributed.get_rank() == 0:
+            #torch.save(accelerator.unwrap_model(model).state_dict(),f"models/model{config.fold}.pt")
+            #torch.save(model.state_dict(),f"models/model{config.fold}.pt")
+            #state_dict=accelerator.get_state_dict(model)
+            #torch.save(state_dict,f"models/model{config.fold}.pt")
+            # print(accelerator.unwrap_model(model).state_dict())
+            # unwrapped_model=accelerator.unwrap_model(model)
+            # full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            # with FSDP.state_dict_type(unwrapped_model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+            #     state = accelerator.get_state_dict(unwrapped_model)
+            # exit()
+            # Using context manager for saving
+            # with FSDP.state_dict_type(
+            #     model, 
+            #     StateDictType.SHARDED_STATE_DICT,
+            #     ShardedStateDictConfig(offload_to_cpu=True)  # Optionally offload to CPU
+            # ):
+            #     state_dict = model.state_dict()
+            #     # Each rank saves its own shard
+            #     torch.save(state_dict, f"model-shard-{torch.distributed.get_rank()}.pt")
+
+            #accelerator.save_model(model, f"models/model{config.fold}.pt")
+            #accelerator.save_state("models")
             data_dict = {
                             "preds": preds.cpu().numpy(),
                             "gts": gts.cpu().numpy(),

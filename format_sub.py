@@ -35,7 +35,7 @@ standard_preds=[]
 for i in tqdm(range(len(test))):
     length=test['id_max'][i]-test['id_min'][i]+1
     id=test['sequence_id'][i]
-    pre_truncated=preds[id]
+    pre_truncated=preds[id][:,[1,0]]
     standard_preds.append(pre_truncated[:length])
     #exit()
     #arrayed_solution.append(np.stack([arrayed_solution[i+len(preds)//2],arrayed_solution[i]],-1))
