@@ -42,7 +42,7 @@ for i in range(len(exp_test)):
 pl_test=pl_test.with_columns(pl.Series(name="experiment_type", values=exp_test))
 #exit()
 
-test=pl.read_csv("../../input/test_sequences.csv")
+test=pl.read_csv(f"{config.input_dir}/test_sequences.csv")
 pl_test=pl_test.join(test[['sequence','sequence_id']],how='left',on='sequence_id')
 
 
