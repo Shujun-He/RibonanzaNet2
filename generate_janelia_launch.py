@@ -187,12 +187,6 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description='Generate distributed training configs')
     parser.add_argument(
-        "--master_node",
-        type=str,
-        help="host name for master node in multi-node runs "
-        "(use `bmgroups` to find eligible nodes; ignored for single-node runs)",
-    )
-    parser.add_argument(
         "--n_nodes",
         type=int,
         default=1,
