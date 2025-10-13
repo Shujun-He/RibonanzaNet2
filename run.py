@@ -49,16 +49,17 @@ os.system('mkdir oofs')
 logger=CSVLogger(['epoch','train_loss','val_loss'],f'logs/fold{config.fold}.csv')
 
 
-hdf_files, train_indices, val_indices = load_and_split_rn2_ABCD()
+hdf_files, train_indices, val_indices = load_and_split_rn2_ABCD(config)
 
 
 # for data scaling experiments
 if config.use_data_percentage<1:
-    print(f"Only using {config.use_data_percentage:.02f} of data")
-    size=int(config.use_data_percentage*len(train_indices))
-    train_indices=np.random.choice(train_indices,size,replace=False)
-    print(f"number of sequences in train {len(train_indices)} after subsampling")
+    train_indices = train_indices[:int(len(train_indices)*config.use_data_percentage)]
+    val_indices = val_indices[:int(len(val_indices)*config.use_data_percentage)]
 
+    print(f"using {config.use_data_percentage} of data")
+    print(f"train shape: {len(train_indices)}")
+    print(f"val shape: {len(val_indices)}")
 
 #exit()
 
@@ -112,8 +113,8 @@ model=RibonanzaNet(config)#.cuda()
 
 #model.load_state_dict(torch.load("../../exps/test41_biglr/models/epoch_14/pytorch_model_fsdp.bin",map_location='cpu'))
 
-
-load_state_dict_ignore_shape(model, config.previous_model_path)
+if config.previous_model_path != "none":
+    load_state_dict_ignore_shape(model, config.previous_model_path)
 
 #reinit last linear layer
 #model.decoder.reset_parameters()

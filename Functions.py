@@ -14,10 +14,10 @@ import h5py
 
 
 
-def load_and_split_rn2_ABCD():
+def load_and_split_rn2_ABCD(config):
 
-    nfolds=6
-    fold=0
+    nfolds=config.nfolds
+    fold=config.fold
 
     #first index is hdf file, and second is index in that hdf file
     hdf_files=[]
@@ -26,7 +26,7 @@ def load_and_split_rn2_ABCD():
 
 
     #first get A and split into train val
-    data=h5py.File('../../input/Ribonanza2A_Genscript.v0.1.0.hdf5', 'r')
+    data=h5py.File(config.hdf_files[0], 'r')
 
     #get high snr data indices
     snr=data['signal_to_noise'][:]
@@ -34,13 +34,12 @@ def load_and_split_rn2_ABCD():
     dirty_data_indices = np.where(((snr>0.5).sum(1)>=1))[0]
 
     #dataset names
-    sublib_data=pd.read_csv('../../sublib_id.csv')['sublibrary'].to_list()
+    #sublib_data=pd.read_csv(config.subset_file)['sublibrary'].to_list()
 
     #StratifiedKFold on dataset
-    kfold=StratifiedKFold(n_splits=nfolds,shuffle=True, random_state=0)
+    kfold=KFold(n_splits=nfolds,shuffle=True, random_state=0)
     fold_indices={}
-    high_quality_dataname=[sublib_data[i] for i in high_quality_indices]
-    for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices, high_quality_dataname)):
+    for i, (train_index, test_index) in enumerate(kfold.split(high_quality_indices)):
         fold_indices[i]=(high_quality_indices[train_index],high_quality_indices[test_index])
     #exit()
 
@@ -56,15 +55,15 @@ def load_and_split_rn2_ABCD():
     hdf_train_indices.extend([(0,i) for i in train_indices])
     hdf_val_indices.extend([(0,i) for i in val_indices])
 
-    #loop through BCD and use all for train
-    BCD=['Ribonanza2B_full40B.v0.1.0.hdf5','Ribonanza2C_full40B.v0.1.0.hdf5','Ribonanza2D.v0.1.0.hdf5','Ribonanza2E.v0.1.0.hdf5']
+    #loop through rest of HDF5 files and use all for train
 
-    for file_index,hdf_file in zip(range(1,5),BCD):
+    for file_index in range(1,len(config.hdf_files)):
+        hdf_file=config.hdf_files[file_index]
         print("loading",
             hdf_file)
         print("file index",file_index)
         
-        data=h5py.File('../../input/'+hdf_file, 'r')
+        data=h5py.File(hdf_file, 'r')
 
         #get high snr data indices take any taht has one profile at snr>=1
         snr=data['signal_to_noise'][:]
