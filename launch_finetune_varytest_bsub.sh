@@ -1,0 +1,2 @@
+bsub -J "finetune_varytest[60-360:5]" -P das -n 2 -gpu "num=1" -q gpu_h100 \
+    "python /groups/flyem/home/huangg/proj/rnaxjanelia/RibonanzaNet2-ft/finetune_temporal_split_varytest.py --config /groups/flyem/home/huangg/proj/rnaxjanelia/RibonanzaNet2-ft/grid_search_configs/config_$1.yaml --rnet_config pairwise.yaml --train_test_data /groups/das/rnastruct/finetuning_data/pdb_ss_data_w_pub_dates.parquet --casp15_data /groups/das/rnastruct/finetuning_data/casp15.csv --n_test \$LSB_JOBINDEX >& logs_ft/\$LSB_JOBINDEX.txt"
