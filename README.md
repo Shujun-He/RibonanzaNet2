@@ -44,6 +44,31 @@ You can generate scripts with ```generate_multinode_configs.sh``` which has
  and then ```launch_all.sh``` to launch distributed processes
 
 
+### Multinode training at Janelia
+
+Since Janelia has an LSF cluster, the process for launching multinode jobs is slightly different.
+You can use `generate_janelia_launch.py` to create job scripts for Janelia's LSF cluster, it's options are:
+```
+# common settings
+--config_path      Path to the config file containing training parameters (required)
+--script_name      Name of the training script (default: run.py)
+--job_name         Base name for the job (default: rnet2-training-<timestamp>)
+--gpu_type         Type of GPU to use (a100, h100, h200; default: h200)
+--n_gpus_per_node  Number of GPUs per node (default: 8)
+--n_cores_per_gpu  Number of CPU cores per GPU (default: 8)
+--mixed_precision  Mixed precision setting (fp16 or bf16; default: bf16)
+
+# multinode-only settings
+--n_nodes          Number of nodes (default: 1)
+--master_node      Host name for master node in multi-node runs (use `bmgroups` to find eligible nodes; ignored for single-node runs)
+```
+
+With `--n_nodes 1`, this script yields a single job script for single-node training, which can be called with `bsub < lsf-scripts/job_000.sh`, or by executing `launch_all.sh`.
+For multi-node training, it generates one job script per node, which can be submitted by executing `launch_all.sh`.
+This seeks to allocate the master process on the specified `--master_node`, which can be found using `bmgroups` to see which hosts belong to which group, and `bhosts -w <groupname>` (e.g., `<groupname>=a100s`) to list all hosts in the group and their currently running jobs (you want to pick an idle host).
+
+
+
 ## Outputs
 
 The code will generate a log file in ```logs/fold0.csv``` and model weights will be saved to ```models``` folder. It will also generate a ```run_stats.json``` that records total runtime
